@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Recordings — never commit captured media
+pi/clips/
+*.h264
+*.mp4
+
+# macOS
+.DS_Store
+
+# Local Claude Code settings
+.claude/settings.local.json
