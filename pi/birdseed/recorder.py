@@ -30,7 +30,7 @@ class Recorder:
 
     def _next_clip_path(self) -> Path:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return self.clips_dir / f"clip_{stamp}.h264"
+        return self.clips_dir / f"clip_{stamp}.mp4"
 
     def run_forever(self) -> None:
         print(f"birdseed recorder up. clips -> {self.clips_dir}/  (Ctrl-C to stop)")

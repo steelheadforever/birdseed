@@ -16,7 +16,7 @@ from pathlib import Path
 from gpiozero import MotionSensor as _GzMotionSensor
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
-from picamera2.outputs import FileOutput
+from picamera2.outputs import FfmpegOutput
 
 from .interfaces import Camera, MotionSensor
 
@@ -43,6 +43,10 @@ class Picamera2Camera(Camera):
     Encoder output is 1920x1080 (the encoder's ceiling — see silicon note 04),
     but the sensor is pinned to its full-FoV 2304x1296 mode, so the ISP
     *downscales* rather than crops. Wide view in, encodable frame out.
+
+    Output goes through FfmpegOutput, which muxes the hardware H.264 straight
+    into a real .mp4 container (no re-encode — just repackaging, with the correct
+    framerate baked in). Plays in QuickTime / phone / browser. See note 05.
     """
 
     def __init__(
@@ -63,7 +67,7 @@ class Picamera2Camera(Camera):
 
     def record_clip(self, path: Path, duration_s: float) -> Path:
         encoder = H264Encoder(bitrate=self._bitrate)
-        self._picam2.start_recording(encoder, FileOutput(str(path)))
+        self._picam2.start_recording(encoder, FfmpegOutput(str(path)))
         try:
             time.sleep(duration_s)
         finally:
