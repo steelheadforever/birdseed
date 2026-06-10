@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<!--
+  birdseed — phase 5 gallery (placeholder for the phase-6 PWA).
+
+  This page is deliberately dumb: it fetches /api/clips and builds the list in
+  the browser. The Pi serves data (JSON) + static bytes (the .mp4s); the client
+  does the rendering. Same "dumb device, smart client" split as bird-ID-on-the-
+  phone. No framework, no build step — one file you can read top to bottom.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>birdseed</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; padding: 1.5rem;
+      font: 16px/1.5 -apple-system, system-ui, sans-serif;
+      background: #14171a; color: #e7e9ea;
+    }
+    header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1.25rem; }
+    h1 { font-size: 1.4rem; margin: 0; }
+    header .count { color: #8b98a5; font-size: .9rem; }
+    .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+    .clip { background: #1c2024; border: 1px solid #2a2f35; border-radius: 12px; overflow: hidden; }
+    .clip video { width: 100%; display: block; background: #000; aspect-ratio: 16 / 9; }
+    .meta { padding: .6rem .8rem; display: flex; justify-content: space-between; gap: .5rem; }
+    .meta .when { font-weight: 600; }
+    .meta .size { color: #8b98a5; }
+    .empty, .error { color: #8b98a5; padding: 2rem 0; }
+    .error { color: #f4736b; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🐦 birdseed</h1>
+    <span class="count" id="count"></span>
+  </header>
+  <div class="grid" id="grid"></div>
+  <p class="empty" id="empty" hidden>No clips yet. Trip the sensor and one will show up here.</p>
+  <p class="error" id="error" hidden></p>
+
+  <script>
+    // Format an ISO timestamp into something a human reads at a glance.
+    function whenLabel(iso) {
+      if (!iso) return "unknown time";
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, {
+        month: "short", day: "numeric",
+        hour: "numeric", minute: "2-digit", second: "2-digit",
+      });
+    }
+
+    function clipCard(clip) {
+      const card = document.createElement("div");
+      card.className = "clip";
+
+      const video = document.createElement("video");
+      video.controls = true;
+      // preload="metadata" fetches just enough to know the duration/dimensions,
+      // NOT the whole clip. The full bytes stream in (via Range requests) only
+      // once you hit play or scrub. Keeps the gallery cheap with many clips.
+      video.preload = "metadata";
+      video.src = "/clips/" + encodeURIComponent(clip.name);
+      card.appendChild(video);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const when = document.createElement("span");
+      when.className = "when";
+      when.textContent = whenLabel(clip.recorded_at);
+      const size = document.createElement("span");
+      size.className = "size";
+      size.textContent = clip.size_human;
+      meta.append(when, size);
+      card.appendChild(meta);
+
+      return card;
+    }
+
+    async function load() {
+      const grid = document.getElementById("grid");
+      const count = document.getElementById("count");
+      const empty = document.getElementById("empty");
+      const error = document.getElementById("error");
+      try {
+        const res = await fetch("/api/clips");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const clips = await res.json();
+        count.textContent = clips.length + (clips.length === 1 ? " clip" : " clips");
+        empty.hidden = clips.length > 0;
+        grid.replaceChildren(...clips.map(clipCard));
+      } catch (e) {
+        error.textContent = "Couldn't reach the Pi: " + e.message;
+        error.hidden = false;
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

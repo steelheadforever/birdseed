@@ -1,0 +1,5 @@
+# Serving layer only (phase 5). Deliberately tiny, and deliberately free of any
+# camera/GPIO deps — the server reads files, nothing more, so it can live in its
+# own venv apart from the apt-installed picamera2 the recorder needs.
+fastapi
+uvicorn
