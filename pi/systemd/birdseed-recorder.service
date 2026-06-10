@@ -1,0 +1,21 @@
+[Unit]
+Description=birdseed recorder — PIR trigger -> camera -> H.264 clips
+# Camera + GPIO are local hardware; no network needed. Just wait for the system
+# to finish coming up.
+After=multi-user.target
+
+[Service]
+Type=simple
+User=steelheadforever
+WorkingDirectory=/home/steelheadforever/birdseed
+# SYSTEM python3 on purpose: it carries the apt-installed picamera2 + gpiozero the
+# recorder needs (the server's venv deliberately does NOT have them).
+ExecStart=/usr/bin/python3 /home/steelheadforever/birdseed/pi/run.py
+# Flush print() straight to the journal instead of buffering it.
+Environment=PYTHONUNBUFFERED=1
+# If it ever dies, bring it back. An unattended feeder must self-heal.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

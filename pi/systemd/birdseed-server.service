@@ -1,0 +1,21 @@
+[Unit]
+Description=birdseed server — read-only LAN clip gallery (FastAPI)
+# Serving needs the network up; capture does not. This is the only real
+# difference between the two units.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=steelheadforever
+WorkingDirectory=/home/steelheadforever/birdseed
+# Its OWN venv: fastapi/uvicorn, no picamera2. The decoupling from capture, made
+# literal — the server can restart without ever touching the camera.
+ExecStart=/home/steelheadforever/birdseed/.venv-server/bin/python /home/steelheadforever/birdseed/pi/serve.py
+Environment=PYTHONUNBUFFERED=1
+Environment=BIRDSEED_PORT=8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

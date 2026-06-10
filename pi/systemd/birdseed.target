@@ -1,0 +1,11 @@
+[Unit]
+# A convenience grouping so you can control both halves with one command, e.g.
+#   sudo systemctl restart birdseed.target
+# Each service also autostarts on its own at boot (they're WantedBy multi-user),
+# so this target is for manual control, not required for cold-boot startup.
+Description=birdseed — recorder + server together
+Wants=birdseed-recorder.service birdseed-server.service
+After=birdseed-recorder.service birdseed-server.service
+
+[Install]
+WantedBy=multi-user.target
