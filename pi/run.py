@@ -39,7 +39,14 @@ def make_backends():
 def main() -> None:
     sensor, camera = make_backends()
     clips_dir = Path(__file__).parent / "clips"
-    recorder = Recorder(sensor, camera, clips_dir, clip_seconds=10.0)
+    # Policy lives here, not in the Recorder: how big the on-disk ring buffer is
+    # allowed to grow. Sized for this build's 32 GB card — ~16 GB of clips leaves
+    # the card roughly half-empty even after RPi OS Lite, which keeps a large pool
+    # of free blocks for the card's wear-leveling (the headroom point in silicon
+    # note 07). Override with BIRDSEED_CLIP_CAP_MB (0 = uncapped).
+    cap_mb = int(os.environ.get("BIRDSEED_CLIP_CAP_MB", "16384"))
+    cap_bytes = cap_mb * 1_000_000 if cap_mb > 0 else None
+    recorder = Recorder(sensor, camera, clips_dir, clip_seconds=10.0, clip_cap_bytes=cap_bytes)
     try:
         recorder.run_forever()
     except KeyboardInterrupt:

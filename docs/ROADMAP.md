@@ -31,12 +31,17 @@ its own process, no hardware deps. Still to deploy/verify on the Pi over LAN.
 - **Phase 3 (confirmation pass) is on hold** until the device is physically
   mounted outside — false-trigger rejection can only be tuned against the real
   outdoor scene (wind, sun flicker), not a living room.
-- **Phase 4 (storage cap) deferred but not skipped** — it's the *writer's* job
-  (prune oldest in the recorder), lands as the next small slice. The serving layer
-  is deliberately read-only and never deletes.
+- **Phase 4 (storage cap) done.** `storage.enforce_size_cap` evicts oldest clips
+  (by filename timestamp) once `clips/` exceeds a byte cap, never deleting the
+  newest; the recorder runs it after each save, `run.py` sets the cap (default
+  16 GB for the 32 GB card, `BIRDSEED_CLIP_CAP_MB`). The *writer* prunes — the
+  read-only server never deletes. Silicon note 07 (flash wear / write amplification).
 - **Live preview split out of phase 5.** Continuous MJPEG keeps the camera + radio
   always-on — a power sink that fights the "dumb Pi" rule. It'll return as a
   *gated, auto-timeout "setup mode"* (off by default, for aiming the camera), most
   usefully built when there's a physical camera to aim.
 
-**Current focus: phase 4 — storage cap (prune in the recorder).**
+**Phases 0–2, 4, 5 done. Phase 3 on hold (needs the device outside).** Next
+candidates: phase 6 (PWA frontend) or phase 7 (Tailscale remote + ntfy push) —
+both buildable now; the rest of phase 3 and phase 8 (power) wait on physical
+mounting.
