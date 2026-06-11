@@ -22,12 +22,31 @@
     header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1.25rem; }
     h1 { font-size: 1.4rem; margin: 0; }
     header .count { color: #8b98a5; font-size: .9rem; }
+    #flip {
+      margin-left: auto; cursor: pointer;
+      font: inherit; font-size: .85rem; color: #e7e9ea;
+      background: #1c2024; border: 1px solid #2a2f35; border-radius: 8px;
+      padding: .3rem .7rem;
+    }
+    #flip[aria-pressed="true"] { background: #2a2f35; }
+    /* The flip is pure presentation: the .mp4 bytes are untouched; the browser
+       just draws every video upside-down. The camera's final mounting isn't
+       decided yet, so orientation is a viewer setting, not a recorder setting. */
+    body.flipped .clip video { transform: rotate(180deg); }
+    /* Native controls render *inside* the <video>, so they flip with it.
+       Counter-rotating the controls' shadow root puts them back upright.
+       WebKit/Blink only — Firefox keeps upside-down controls, and iOS's
+       native fullscreen player ignores page CSS entirely (inline playback
+       is fine). Cosmetic either way: clicks still land correctly. */
+    body.flipped .clip video::-webkit-media-controls { transform: rotate(180deg); }
     .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
     .clip { background: #1c2024; border: 1px solid #2a2f35; border-radius: 12px; overflow: hidden; }
     .clip video { width: 100%; display: block; background: #000; aspect-ratio: 16 / 9; }
-    .meta { padding: .6rem .8rem; display: flex; justify-content: space-between; gap: .5rem; }
+    .meta { padding: .6rem .8rem; display: flex; align-items: baseline; gap: .5rem; }
     .meta .when { font-weight: 600; }
-    .meta .size { color: #8b98a5; }
+    .meta .size { color: #8b98a5; margin-left: auto; }
+    .meta .dl { color: #6bb1f4; text-decoration: none; }
+    .meta .dl:hover { text-decoration: underline; }
     .empty, .error { color: #8b98a5; padding: 2rem 0; }
     .error { color: #f4736b; }
   </style>
@@ -36,12 +55,32 @@
   <header>
     <h1>🐦 birdseed</h1>
     <span class="count" id="count"></span>
+    <button id="flip" aria-pressed="false" title="Rotate all clips 180°">⟲ flip view</button>
   </header>
   <div class="grid" id="grid"></div>
   <p class="empty" id="empty" hidden>No clips yet. Trip the sensor and one will show up here.</p>
   <p class="error" id="error" hidden></p>
 
   <script>
+    // Orientation lives in the browser (localStorage), per the "dumb device"
+    // split: the Pi records whatever the sensor sees; how it's displayed is the
+    // client's problem. Once the camera is mounted for good, the recorder can
+    // flip at capture time and this button becomes a no-op you leave off.
+    const FLIP_KEY = "birdseed.flip";
+
+    function applyFlip(on) {
+      document.body.classList.toggle("flipped", on);
+      document.getElementById("flip").setAttribute("aria-pressed", String(on));
+    }
+
+    document.getElementById("flip").addEventListener("click", () => {
+      const on = !document.body.classList.contains("flipped");
+      localStorage.setItem(FLIP_KEY, on ? "1" : "");
+      applyFlip(on);
+    });
+
+    applyFlip(Boolean(localStorage.getItem(FLIP_KEY)));
+
     // Format an ISO timestamp into something a human reads at a glance.
     function whenLabel(iso) {
       if (!iso) return "unknown time";
@@ -73,7 +112,15 @@
       const size = document.createElement("span");
       size.className = "size";
       size.textContent = clip.size_human;
-      meta.append(when, size);
+      // Same URL the player streams from; the download attribute just tells
+      // the browser to save the bytes instead of playing them. Handy for
+      // pulling a clip onto the phone to rule out playback-side glitches.
+      const dl = document.createElement("a");
+      dl.className = "dl";
+      dl.href = "/clips/" + encodeURIComponent(clip.name);
+      dl.download = clip.name;
+      dl.textContent = "download";
+      meta.append(when, size, dl);
       card.appendChild(meta);
 
       return card;

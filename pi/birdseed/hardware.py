@@ -65,13 +65,30 @@ class Picamera2Camera(Camera):
         self._picam2.configure(config)
         self._bitrate = bitrate
 
+    # How long the sensor pipeline + auto-exposure need after a cold start
+    # before frames arrive at a steady cadence. Measured on real clips: the
+    # first ~0.7 s of frames came out sparse and irregularly timestamped,
+    # which played back as a stutter-then-freeze at the top of every clip.
+    WARMUP_S = 1.5
+
     def record_clip(self, path: Path, duration_s: float) -> Path:
         encoder = H264Encoder(bitrate=self._bitrate)
-        self._picam2.start_recording(encoder, FfmpegOutput(str(path)))
+        # Start the camera first and let it warm up BEFORE attaching the
+        # encoder, so the ragged spin-up frames are never recorded and the
+        # clip is duration_s of steady video (previously the camera started
+        # inside start_recording, so warmup ate ~1.5 s of the clip). The
+        # camera still stops between clips — it only draws power while a
+        # clip is being recorded, which is the deal we want for solar later.
+        self._picam2.start()
         try:
-            time.sleep(duration_s)
+            time.sleep(self.WARMUP_S)
+            self._picam2.start_encoder(encoder, FfmpegOutput(str(path)))
+            try:
+                time.sleep(duration_s)
+            finally:
+                self._picam2.stop_encoder()
         finally:
             # Always stop, even on Ctrl-C mid-clip, so the camera is released
             # for the next run. An interrupted recording otherwise locks it.
-            self._picam2.stop_recording()
+            self._picam2.stop()
         return path
