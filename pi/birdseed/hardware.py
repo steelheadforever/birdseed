@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 
 from gpiozero import MotionSensor as _GzMotionSensor
+from libcamera import Transform
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FileOutput
@@ -67,10 +68,17 @@ class Picamera2Camera(Camera):
         encode_size: tuple[int, int] = (1920, 1080),
         sensor_size: tuple[int, int] = (2304, 1296),
         bitrate: int = 8_000_000,
+        # The camera is currently mounted upside-down, so flip by default.
+        # This is the ISP reading the sensor in the other direction — free
+        # (no CPU, no quality loss) and baked into the clip bytes, unlike
+        # the website's flip-view button, which is per-viewer cosmetics.
+        # Revisit when the enclosure fixes the final mounting.
+        rotate_180: bool = True,
     ):
         self._picam2 = Picamera2()
         config = self._picam2.create_video_configuration(
             main={"size": encode_size},
+            transform=Transform(hflip=rotate_180, vflip=rotate_180),
             # Pin the full-FoV binned sensor mode; without this the pipeline may
             # pick the narrower cropped mode to match 1080p and lose field of view.
             sensor={"output_size": sensor_size, "bit_depth": 10},
