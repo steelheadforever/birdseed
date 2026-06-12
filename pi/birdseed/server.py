@@ -62,20 +62,55 @@ def _recorded_at(name: str) -> str | None:
     return dt.isoformat()
 
 
-@app.get("/api/clips")
-def list_clips() -> list[dict]:
-    """Every clip on disk, newest first. Pure read of the directory."""
+@app.get("/api/days")
+def list_days() -> list[dict]:
+    """Which days have clips, and how many — newest day first.
+
+    This is the gallery's table of contents. The client fetches this (tiny),
+    renders a section per day, and only pulls a day's clip list when it's
+    actually opened. Still a pure directory read: the date lives in the
+    filename, so 'group by day' is 'group by name prefix'.
+    """
     if not CLIPS_DIR.is_dir():
         return []
+    counts: dict[str, int] = {}
+    for path in CLIPS_DIR.glob("clip_*.mp4"):
+        iso = _recorded_at(path.name)
+        if iso is not None:
+            day = iso[:10]  # YYYY-MM-DD
+            counts[day] = counts.get(day, 0) + 1
+    return [{"day": d, "count": c} for d, c in sorted(counts.items(), reverse=True)]
+
+
+@app.get("/api/clips")
+def list_clips(day: str | None = None) -> list[dict]:
+    """Clips on disk, newest first — optionally just one day's (?day=YYYY-MM-DD).
+
+    The day filter is a glob prefix, not a scan-and-compare: the capture time
+    is stamped into the filename, so one day's clips share a name prefix and
+    the directory read never touches the other days' files at all.
+    """
+    if not CLIPS_DIR.is_dir():
+        return []
+    prefix = "clip_"
+    if day is not None:
+        try:
+            prefix = datetime.strptime(day, "%Y-%m-%d").strftime("clip_%Y%m%d_")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="day must be YYYY-MM-DD")
     clips = []
-    for path in CLIPS_DIR.glob("*.mp4"):
+    for path in CLIPS_DIR.glob(prefix + "*.mp4"):
         stat = path.stat()
+        thumb = path.with_suffix(".jpg")
         clips.append(
             {
                 "name": path.name,
                 "recorded_at": _recorded_at(path.name),
                 "size_bytes": stat.st_size,
                 "size_human": _human_size(stat.st_size),
+                # The poster JPEG's name, or null — clips from before posters
+                # existed don't have one, and the client shows a placeholder.
+                "thumb": thumb.name if thumb.is_file() else None,
             }
         )
     # Newest first. recorded_at is None-safe to sort on via the filename, which
@@ -99,6 +134,15 @@ def get_clip(name: str) -> FileResponse:
     if candidate.parent != CLIPS_DIR.resolve() or candidate.suffix != ".mp4" or not candidate.is_file():
         raise HTTPException(status_code=404, detail="no such clip")
     return FileResponse(candidate, media_type="video/mp4")
+
+
+@app.get("/thumbs/{name}")
+def get_thumb(name: str) -> FileResponse:
+    """Serve one clip's poster JPEG. Same traversal guard as the clips route."""
+    candidate = (CLIPS_DIR / name).resolve()
+    if candidate.parent != CLIPS_DIR.resolve() or candidate.suffix != ".jpg" or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="no such thumbnail")
+    return FileResponse(candidate, media_type="image/jpeg")
 
 
 @app.get("/")

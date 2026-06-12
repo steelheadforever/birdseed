@@ -45,6 +45,10 @@ def enforce_size_cap(clips_dir: Path, cap_bytes: int) -> list[Path]:
         oldest = clips.pop(0)
         total -= oldest.stat().st_size
         oldest.unlink()
+        # The clip's poster JPEG rides along. Thumbnails are ~30 KB next to
+        # ~6 MB clips, so they aren't worth counting toward the cap — but an
+        # orphaned poster with no clip behind it is just litter.
+        oldest.with_suffix(".jpg").unlink(missing_ok=True)
         deleted.append(oldest)
 
     return deleted

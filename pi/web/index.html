@@ -2,10 +2,18 @@
 <!--
   birdseed — phase 5 gallery (placeholder for the phase-6 PWA).
 
-  This page is deliberately dumb: it fetches /api/clips and builds the list in
-  the browser. The Pi serves data (JSON) + static bytes (the .mp4s); the client
-  does the rendering. Same "dumb device, smart client" split as bird-ID-on-the-
-  phone. No framework, no build step — one file you can read top to bottom.
+  This page is deliberately dumb: the Pi serves data (JSON) + static bytes;
+  the client does the rendering. Same "dumb device, smart client" split as
+  bird-ID-on-the-phone. No framework, no build step — one file you can read
+  top to bottom.
+
+  It's also deliberately lazy, because the server is a Pi Zero serving off an
+  SD card. Three rules keep the load tiny:
+    1. /api/days first (a few bytes) — sections render before any clip data.
+    2. A day's clip list is fetched only when that day is opened.
+    3. Cards are poster JPEGs (<img loading="lazy">, so only the visible ones
+       are fetched). A <video> exists only after you tap a card — video bytes
+       move only when someone is actually watching.
 -->
 <html lang="en">
 <head>
@@ -31,17 +39,42 @@
     #flip[aria-pressed="true"] { background: #2a2f35; }
     /* The flip is pure presentation: the .mp4 bytes are untouched; the browser
        just draws every video upside-down. The camera's final mounting isn't
-       decided yet, so orientation is a viewer setting, not a recorder setting. */
-    body.flipped .clip video { transform: rotate(180deg); }
+       decided yet, so orientation is a viewer setting, not a recorder setting.
+       (New clips are flipped on the Pi itself; this stays for the old ones.) */
+    body.flipped .clip video, body.flipped .clip img { transform: rotate(180deg); }
     /* Native controls render *inside* the <video>, so they flip with it.
        Counter-rotating the controls' shadow root puts them back upright.
        WebKit/Blink only — Firefox keeps upside-down controls, and iOS's
        native fullscreen player ignores page CSS entirely (inline playback
        is fine). Cosmetic either way: clicks still land correctly. */
     body.flipped .clip video::-webkit-media-controls { transform: rotate(180deg); }
-    .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+
+    .day { margin-bottom: 1rem; }
+    .day > button {
+      /* The whole day header is the open/close control. */
+      display: flex; align-items: baseline; gap: .6rem; width: 100%;
+      cursor: pointer; text-align: left;
+      font: inherit; color: inherit; background: none; border: none;
+      padding: .5rem 0; border-top: 1px solid #2a2f35;
+    }
+    .day h2 { font-size: 1.05rem; margin: 0; }
+    .day .daycount { color: #8b98a5; font-size: .85rem; }
+    .day .chev { margin-left: auto; color: #8b98a5; transition: transform .15s; }
+    .day[data-open] .chev { transform: rotate(90deg); }
+
+    .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); padding: .25rem 0 .75rem; }
     .clip { background: #1c2024; border: 1px solid #2a2f35; border-radius: 12px; overflow: hidden; }
     .clip video { width: 100%; display: block; background: #000; aspect-ratio: 16 / 9; }
+    .poster {
+      position: relative; display: block; width: 100%; padding: 0;
+      cursor: pointer; background: #000; border: none; aspect-ratio: 16 / 9;
+    }
+    .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .poster .badge {
+      position: absolute; inset: 0; display: grid; place-items: center;
+      font-size: 2.2rem; color: #fff; text-shadow: 0 1px 8px rgba(0,0,0,.7);
+    }
+    .poster.noimg .badge { color: #8b98a5; }
     .meta { padding: .6rem .8rem; display: flex; align-items: baseline; gap: .5rem; }
     .meta .when { font-weight: 600; }
     .meta .size { color: #8b98a5; margin-left: auto; }
@@ -57,7 +90,7 @@
     <span class="count" id="count"></span>
     <button id="flip" aria-pressed="false" title="Rotate all clips 180°">⟲ flip view</button>
   </header>
-  <div class="grid" id="grid"></div>
+  <div id="days"></div>
   <p class="empty" id="empty" hidden>No clips yet. Trip the sensor and one will show up here.</p>
   <p class="error" id="error" hidden></p>
 
@@ -81,13 +114,19 @@
 
     applyFlip(Boolean(localStorage.getItem(FLIP_KEY)));
 
-    // Format an ISO timestamp into something a human reads at a glance.
-    function whenLabel(iso) {
+    // The day section gives the date; cards only need the time of day.
+    function timeLabel(iso) {
       if (!iso) return "unknown time";
-      const d = new Date(iso);
-      return d.toLocaleString(undefined, {
-        month: "short", day: "numeric",
+      return new Date(iso).toLocaleTimeString(undefined, {
         hour: "numeric", minute: "2-digit", second: "2-digit",
+      });
+    }
+
+    function dayLabel(day) {
+      // day is YYYY-MM-DD. Parse at local noon — a bare date string parses as
+      // UTC midnight, which renders as the previous day in western timezones.
+      return new Date(day + "T12:00:00").toLocaleDateString(undefined, {
+        weekday: "short", month: "short", day: "numeric",
       });
     }
 
@@ -95,20 +134,43 @@
       const card = document.createElement("div");
       card.className = "clip";
 
-      const video = document.createElement("video");
-      video.controls = true;
-      // preload="metadata" fetches just enough to know the duration/dimensions,
-      // NOT the whole clip. The full bytes stream in (via Range requests) only
-      // once you hit play or scrub. Keeps the gallery cheap with many clips.
-      video.preload = "metadata";
-      video.src = "/clips/" + encodeURIComponent(clip.name);
-      card.appendChild(video);
+      // The card starts as a poster <img> (a few KB, lazily fetched). The
+      // <video> — and any clip bytes at all — exist only after a tap.
+      const poster = document.createElement("button");
+      poster.className = "poster";
+      poster.title = "Play clip";
+      if (clip.thumb) {
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        img.alt = "";
+        img.src = "/thumbs/" + encodeURIComponent(clip.thumb);
+        // A listed thumb that 404s mid-flight (e.g. just pruned) degrades to
+        // the same placeholder look as a clip with no poster at all.
+        img.onerror = () => { img.remove(); poster.classList.add("noimg"); };
+        poster.appendChild(img);
+      } else {
+        poster.classList.add("noimg");
+      }
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "▶";
+      poster.appendChild(badge);
+
+      poster.addEventListener("click", () => {
+        const video = document.createElement("video");
+        video.controls = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        video.src = "/clips/" + encodeURIComponent(clip.name);
+        poster.replaceWith(video);
+      });
+      card.appendChild(poster);
 
       const meta = document.createElement("div");
       meta.className = "meta";
       const when = document.createElement("span");
       when.className = "when";
-      when.textContent = whenLabel(clip.recorded_at);
+      when.textContent = timeLabel(clip.recorded_at);
       const size = document.createElement("span");
       size.className = "size";
       size.textContent = clip.size_human;
@@ -126,21 +188,71 @@
       return card;
     }
 
-    async function load() {
-      const grid = document.getElementById("grid");
-      const count = document.getElementById("count");
-      const empty = document.getElementById("empty");
-      const error = document.getElementById("error");
-      try {
-        const res = await fetch("/api/clips");
+    function daySection(day) {
+      const section = document.createElement("section");
+      section.className = "day";
+
+      const head = document.createElement("button");
+      const title = document.createElement("h2");
+      title.textContent = dayLabel(day.day);
+      const daycount = document.createElement("span");
+      daycount.className = "daycount";
+      daycount.textContent = day.count + (day.count === 1 ? " clip" : " clips");
+      const chev = document.createElement("span");
+      chev.className = "chev";
+      chev.textContent = "›";
+      head.append(title, daycount, chev);
+      section.appendChild(head);
+
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      grid.hidden = true;
+      section.appendChild(grid);
+
+      let loaded = false;
+      async function open() {
+        section.dataset.open = "";
+        grid.hidden = false;
+        if (loaded) return;
+        loaded = true;  // one fetch per day, ever
+        const res = await fetch("/api/clips?day=" + day.day);
         if (!res.ok) throw new Error("HTTP " + res.status);
         const clips = await res.json();
-        count.textContent = clips.length + (clips.length === 1 ? " clip" : " clips");
-        empty.hidden = clips.length > 0;
         grid.replaceChildren(...clips.map(clipCard));
+      }
+      head.addEventListener("click", () => {
+        if (section.dataset.open !== undefined) {
+          delete section.dataset.open;
+          grid.hidden = true;  // collapse only hides; nothing refetches
+        } else {
+          open().catch(showError);
+        }
+      });
+
+      section.open = open;  // so load() can auto-open the newest day
+      return section;
+    }
+
+    function showError(e) {
+      const error = document.getElementById("error");
+      error.textContent = "Couldn't reach the Pi: " + e.message;
+      error.hidden = false;
+    }
+
+    async function load() {
+      try {
+        const res = await fetch("/api/days");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const days = await res.json();
+        const total = days.reduce((n, d) => n + d.count, 0);
+        document.getElementById("count").textContent =
+          total + (total === 1 ? " clip" : " clips");
+        document.getElementById("empty").hidden = days.length > 0;
+        const sections = days.map((d) => daySection(d));
+        document.getElementById("days").replaceChildren(...sections);
+        if (sections.length) await sections[0].open();  // today opens itself
       } catch (e) {
-        error.textContent = "Couldn't reach the Pi: " + e.message;
-        error.hidden = false;
+        showError(e);
       }
     }
 

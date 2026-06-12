@@ -125,13 +125,29 @@ class Picamera2Camera(Camera):
         globs *.mp4) can never list a half-written clip. The raw file is
         only deleted on success — if ffmpeg ever fails, the bytes survive
         on disk for a post-mortem.
+
+        +faststart moves the moov atom (the mp4's index) to the front of the
+        file. Browsers need the moov before they can show anything, and with
+        it at the back every gallery card costs range-request gymnastics into
+        the tail of a file on a slow SD card. One flag, one extra rewrite
+        pass, while nothing else is happening.
         """
         part = path.with_suffix(".mp4.part")
         subprocess.run(
             ["ffmpeg", "-loglevel", "error", "-y",
              "-framerate", str(self.FPS), "-i", str(raw),
-             "-c", "copy", "-f", "mp4", str(part)],
+             "-c", "copy", "-movflags", "+faststart", "-f", "mp4", str(part)],
             check=True,
+        )
+        # Poster frame for the gallery: one JPEG, ~30 KB, so the website can
+        # show a grid of <img> instead of opening a video stream per clip.
+        # Grabbed 1 s in (the trigger's subject should be in frame by then).
+        # Best-effort on purpose: a clip without a poster beats no clip.
+        subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-y",
+             "-ss", "1", "-i", str(part),
+             "-frames:v", "1", "-vf", "scale=480:-2", str(path.with_suffix(".jpg"))],
+            check=False,
         )
         part.rename(path)
         raw.unlink()
