@@ -13,10 +13,12 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import subprocess
+
 from gpiozero import MotionSensor as _GzMotionSensor
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
-from picamera2.outputs import FfmpegOutput
+from picamera2.outputs import FileOutput
 
 from .interfaces import Camera, MotionSensor
 
@@ -44,10 +46,21 @@ class Picamera2Camera(Camera):
     but the sensor is pinned to its full-FoV 2304x1296 mode, so the ISP
     *downscales* rather than crops. Wide view in, encodable frame out.
 
-    Output goes through FfmpegOutput, which muxes the hardware H.264 straight
-    into a real .mp4 container (no re-encode — just repackaging, with the correct
-    framerate baked in). Plays in QuickTime / phone / browser. See note 05.
+    Recording is two steps on purpose. During capture the encoder's bytes go
+    straight to a raw .h264 file (FileOutput — pure python, no subprocess).
+    Only after the clip ends does ffmpeg repackage it into .mp4 (stream copy,
+    no re-encode). We used to mux live through FfmpegOutput instead, and it
+    was a bug factory: it pipes frames to an ffmpeg subprocess started with
+    -use_wallclock_as_timestamps, so frames are stamped when ffmpeg *reads*
+    them, not when the sensor captured them. While ffmpeg boots (seconds, on
+    a Zero 2 W) frames pile up in the pipe and drain with garbage timing —
+    every clip opened with a stutter-then-freeze, and the boot time was
+    silently eaten out of the clip's duration. Raw H.264 has no timestamps
+    at all, so the after-the-fact remux stamps a perfectly uniform FPS — and
+    there's no subprocess in the capture path left to hiccup. See note 05.
     """
+
+    FPS = 30
 
     def __init__(
         self,
@@ -61,6 +74,10 @@ class Picamera2Camera(Camera):
             # Pin the full-FoV binned sensor mode; without this the pipeline may
             # pick the narrower cropped mode to match 1080p and lose field of view.
             sensor={"output_size": sensor_size, "bit_depth": 10},
+            # Pin the frame cadence (this is also the video-config default).
+            # The remux below stamps the .mp4 at FPS, so it must be explicit
+            # here rather than left to whatever the sensor mode feels like.
+            controls={"FrameDurationLimits": (1_000_000 // self.FPS,) * 2},
         )
         self._picam2.configure(config)
         self._bitrate = bitrate
@@ -73,16 +90,15 @@ class Picamera2Camera(Camera):
 
     def record_clip(self, path: Path, duration_s: float) -> Path:
         encoder = H264Encoder(bitrate=self._bitrate)
+        raw = path.with_suffix(".h264")
         # Start the camera first and let it warm up BEFORE attaching the
-        # encoder, so the ragged spin-up frames are never recorded and the
-        # clip is duration_s of steady video (previously the camera started
-        # inside start_recording, so warmup ate ~1.5 s of the clip). The
-        # camera still stops between clips — it only draws power while a
+        # encoder, so auto-exposure has settled by the first recorded frame.
+        # The camera still stops between clips — it only draws power while a
         # clip is being recorded, which is the deal we want for solar later.
         self._picam2.start()
         try:
             time.sleep(self.WARMUP_S)
-            self._picam2.start_encoder(encoder, FfmpegOutput(str(path)))
+            self._picam2.start_encoder(encoder, FileOutput(str(raw)))
             try:
                 time.sleep(duration_s)
             finally:
@@ -91,4 +107,23 @@ class Picamera2Camera(Camera):
             # Always stop, even on Ctrl-C mid-clip, so the camera is released
             # for the next run. An interrupted recording otherwise locks it.
             self._picam2.stop()
+        self._remux(raw, path)
         return path
+
+    def _remux(self, raw: Path, path: Path) -> None:
+        """Repackage raw H.264 into .mp4: stream copy, uniform FPS timestamps.
+
+        Writes to a .part file and renames at the end so the server (which
+        globs *.mp4) can never list a half-written clip. The raw file is
+        only deleted on success — if ffmpeg ever fails, the bytes survive
+        on disk for a post-mortem.
+        """
+        part = path.with_suffix(".mp4.part")
+        subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-y",
+             "-framerate", str(self.FPS), "-i", str(raw),
+             "-c", "copy", "-f", "mp4", str(part)],
+            check=True,
+        )
+        part.rename(path)
+        raw.unlink()
