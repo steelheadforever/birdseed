@@ -12,59 +12,104 @@
     1. /api/days first (a few bytes) — sections render before any clip data.
     2. A day's clip list is fetched only when that day is opened.
     3. Cards are poster JPEGs (<img loading="lazy">, so only the visible ones
-       are fetched). A <video> exists only after you tap a card — video bytes
-       move only when someone is actually watching.
+       are fetched). A <video> exists only in the lightbox — video bytes move
+       only when someone is actually watching.
+
+  The look: a field journal, not a security console. Bark, moss, and cream —
+  the clips are the design; everything else stays quiet.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>birdseed</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐦</text></svg>" />
   <style>
-    :root { color-scheme: dark; }
-    body {
-      margin: 0; padding: 1.5rem;
-      font: 16px/1.5 -apple-system, system-ui, sans-serif;
-      background: #14171a; color: #e7e9ea;
+    :root {
+      color-scheme: dark;
+      /* The whole palette, named once. Bark for surfaces, moss for action,
+         cream for words, tan for asides. */
+      --night: #171310;
+      --bark: #221b15;
+      --bark-edge: #382c21;
+      --cream: #f0e7d8;
+      --tan: #a99a85;
+      --moss: #9db87a;
+      --moss-deep: #76925c;
+      --alarm: #e08a6a;
     }
+    body {
+      margin: 0 auto; padding: 1.5rem; max-width: 1200px;
+      font: 16px/1.5 -apple-system, system-ui, sans-serif;
+      background: var(--night); color: var(--cream);
+    }
+
     header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1.25rem; }
-    h1 { font-size: 1.4rem; margin: 0; }
-    header .count { color: #8b98a5; font-size: .9rem; }
+    h1 { font-size: 1.5rem; margin: 0; letter-spacing: .01em; }
+    header .tagline { color: var(--tan); font-size: .9rem; font-style: italic; }
+    @media (max-width: 560px) { header .tagline { display: none; } }
     #flip {
       margin-left: auto; cursor: pointer;
-      font: inherit; font-size: .85rem; color: #e7e9ea;
-      background: #1c2024; border: 1px solid #2a2f35; border-radius: 8px;
+      font: inherit; font-size: .85rem; color: var(--cream);
+      background: var(--bark); border: 1px solid var(--bark-edge); border-radius: 8px;
       padding: .3rem .7rem;
     }
-    #flip[aria-pressed="true"] { background: #2a2f35; }
+    #flip[aria-pressed="true"] { background: var(--bark-edge); }
     /* The flip is pure presentation: the .mp4 bytes are untouched; the browser
-       just draws every video upside-down. The camera's final mounting isn't
-       decided yet, so orientation is a viewer setting, not a recorder setting.
-       (New clips are flipped on the Pi itself; this stays for the old ones.) */
-    body.flipped .clip video, body.flipped .clip img { transform: rotate(180deg); }
+       just draws everything upside-down. New clips are flipped on the Pi
+       itself; this stays for the clips recorded before that. */
+    body.flipped video, body.flipped .poster img, body.flipped #heroShot img { transform: rotate(180deg); }
     /* Native controls render *inside* the <video>, so they flip with it.
        Counter-rotating the controls' shadow root puts them back upright.
        WebKit/Blink only — Firefox keeps upside-down controls, and iOS's
        native fullscreen player ignores page CSS entirely (inline playback
        is fine). Cosmetic either way: clicks still land correctly. */
-    body.flipped .clip video::-webkit-media-controls { transform: rotate(180deg); }
+    body.flipped video::-webkit-media-controls { transform: rotate(180deg); }
 
-    .day { margin-bottom: 1rem; }
+    /* ---- hero: the page opens by answering "who came by last?" ---- */
+    #hero { margin-bottom: 1.75rem; }
+    #heroShot {
+      position: relative; display: block; width: 100%; padding: 0;
+      cursor: pointer; border: 1px solid var(--bark-edge); border-radius: 16px;
+      overflow: hidden; background: #000; aspect-ratio: 21 / 9;
+    }
+    #heroShot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    #heroShot .scrim {
+      position: absolute; inset: auto 0 0 0; padding: 2.5rem 1.25rem .9rem;
+      background: linear-gradient(transparent, rgba(13, 10, 8, .85));
+      display: flex; flex-direction: column; align-items: flex-start; gap: .1rem;
+      text-align: left;
+    }
+    #heroShot .kicker {
+      font-size: .72rem; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--moss); font-weight: 600;
+    }
+    #heroShot .when { font-size: 1.25rem; font-weight: 650; color: var(--cream); }
+    #stats {
+      margin: .6rem .2rem 0; color: var(--tan); font-size: .9rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ---- day sections ---- */
+    .day { margin-bottom: .5rem; }
     .day > button {
       /* The whole day header is the open/close control. */
       display: flex; align-items: baseline; gap: .6rem; width: 100%;
       cursor: pointer; text-align: left;
       font: inherit; color: inherit; background: none; border: none;
-      padding: .5rem 0; border-top: 1px solid #2a2f35;
+      padding: .65rem 0; border-top: 1px solid var(--bark-edge);
     }
-    .day h2 { font-size: 1.05rem; margin: 0; }
-    .day .daycount { color: #8b98a5; font-size: .85rem; }
-    .day .chev { margin-left: auto; color: #8b98a5; transition: transform .15s; }
+    .day h2 { font-size: 1.1rem; margin: 0; }
+    .day .daycount { color: var(--tan); font-size: .85rem; font-variant-numeric: tabular-nums; }
+    .day .chev { margin-left: auto; color: var(--moss-deep); transition: transform .15s; }
     .day[data-open] .chev { transform: rotate(90deg); }
 
-    .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); padding: .25rem 0 .75rem; }
-    .clip { background: #1c2024; border: 1px solid #2a2f35; border-radius: 12px; overflow: hidden; }
-    .clip video { width: 100%; display: block; background: #000; aspect-ratio: 16 / 9; }
+    .grid { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); padding: .25rem 0 1rem; }
+    .clip {
+      background: var(--bark); border: 1px solid var(--bark-edge); border-radius: 12px;
+      overflow: hidden; transition: transform .15s, border-color .15s;
+    }
+    .clip:hover { transform: translateY(-2px); border-color: var(--moss-deep); }
     .poster {
       position: relative; display: block; width: 100%; padding: 0;
       cursor: pointer; background: #000; border: none; aspect-ratio: 16 / 9;
@@ -72,33 +117,98 @@
     .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .poster .badge {
       position: absolute; inset: 0; display: grid; place-items: center;
-      font-size: 2.2rem; color: #fff; text-shadow: 0 1px 8px rgba(0,0,0,.7);
+      font-size: 2rem; color: var(--cream); text-shadow: 0 1px 8px rgba(0,0,0,.7);
+      opacity: .85;
     }
-    .poster.noimg .badge { color: #8b98a5; }
-    .meta { padding: .6rem .8rem; display: flex; align-items: baseline; gap: .5rem; }
+    .poster.noimg .badge { color: var(--tan); }
+    .meta {
+      padding: .55rem .8rem; display: flex; align-items: baseline; gap: .5rem;
+      font-variant-numeric: tabular-nums;
+    }
     .meta .when { font-weight: 600; }
-    .meta .size { color: #8b98a5; margin-left: auto; }
-    .meta .dl { color: #6bb1f4; text-decoration: none; }
-    .meta .dl:hover { text-decoration: underline; }
-    .empty, .error { color: #8b98a5; padding: 2rem 0; }
-    .error { color: #f4736b; }
+    .meta .size { color: var(--tan); margin-left: auto; font-size: .9rem; }
+
+    /* Skeletons: what a day looks like for the beat between tap and data. */
+    .skeleton { border-radius: 12px; aspect-ratio: 16 / 9; border: 1px solid var(--bark-edge);
+      background: linear-gradient(100deg, var(--bark) 40%, var(--bark-edge) 50%, var(--bark) 60%);
+      background-size: 300% 100%; animation: shimmer 1.2s infinite linear;
+    }
+    @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+    /* ---- lightbox: one clip, big, with neighbors a key-press away ---- */
+    #lightbox {
+      border: 1px solid var(--bark-edge); border-radius: 16px; padding: 0;
+      background: var(--bark); color: var(--cream);
+      width: min(94vw, 1100px);
+    }
+    #lightbox::backdrop { background: rgba(10, 8, 6, .82); backdrop-filter: blur(3px); }
+    #lightbox video { width: 100%; max-height: 74vh; display: block; background: #000; aspect-ratio: 16 / 9; }
+    #lightbox .bar {
+      display: flex; align-items: baseline; gap: .75rem; padding: .7rem 1rem;
+      font-variant-numeric: tabular-nums;
+    }
+    #lightbox .bar .when { font-weight: 650; }
+    #lightbox .bar .size { color: var(--tan); font-size: .9rem; }
+    #lightbox .bar .dl { margin-left: auto; color: var(--moss); text-decoration: none; }
+    #lightbox .bar .dl:hover { text-decoration: underline; }
+    #lightbox .nav {
+      position: absolute; top: 0; bottom: 3.2rem; width: 4.5rem;
+      display: grid; place-items: center; cursor: pointer;
+      font-size: 2rem; color: var(--cream); background: none; border: none;
+      opacity: 0; transition: opacity .15s; text-shadow: 0 1px 8px rgba(0,0,0,.8);
+    }
+    #lightbox:hover .nav:not(:disabled) { opacity: .9; }
+    #lightbox .nav:disabled { cursor: default; }
+    #prev { left: 0; } #next { right: 0; }
+    #close {
+      position: absolute; top: .4rem; right: .6rem; cursor: pointer;
+      font-size: 1.4rem; color: var(--cream); background: none; border: none;
+      text-shadow: 0 1px 8px rgba(0,0,0,.8);
+    }
+
+    .empty, .error { color: var(--tan); padding: 2rem 0; }
+    .error { color: var(--alarm); }
   </style>
 </head>
 <body>
   <header>
     <h1>🐦 birdseed</h1>
-    <span class="count" id="count"></span>
+    <span class="tagline">what the feeder saw</span>
     <button id="flip" aria-pressed="false" title="Rotate all clips 180°">⟲ flip view</button>
   </header>
+
+  <section id="hero" hidden>
+    <button id="heroShot" title="Play the latest clip">
+      <img id="heroImg" alt="" />
+      <span class="scrim">
+        <span class="kicker">last visitor</span>
+        <span class="when" id="heroWhen"></span>
+      </span>
+    </button>
+    <p id="stats"></p>
+  </section>
+
   <div id="days"></div>
   <p class="empty" id="empty" hidden>No clips yet. Trip the sensor and one will show up here.</p>
   <p class="error" id="error" hidden></p>
 
+  <dialog id="lightbox">
+    <video id="lbVideo" controls autoplay playsinline></video>
+    <div class="bar">
+      <span class="when" id="lbWhen"></span>
+      <span class="size" id="lbSize"></span>
+      <a class="dl" id="lbDl" href="">download</a>
+    </div>
+    <button class="nav" id="prev" title="Newer clip">‹</button>
+    <button class="nav" id="next" title="Older clip">›</button>
+    <button id="close" title="Close">✕</button>
+  </dialog>
+
   <script>
     // Orientation lives in the browser (localStorage), per the "dumb device"
-    // split: the Pi records whatever the sensor sees; how it's displayed is the
-    // client's problem. Once the camera is mounted for good, the recorder can
-    // flip at capture time and this button becomes a no-op you leave off.
+    // split: the Pi records whatever the sensor sees; how it's displayed is
+    // the client's problem. New clips are flipped at capture time on the Pi;
+    // this button is for viewing the old upside-down ones.
     const FLIP_KEY = "birdseed.flip";
 
     function applyFlip(on) {
@@ -125,17 +235,88 @@
     function dayLabel(day) {
       // day is YYYY-MM-DD. Parse at local noon — a bare date string parses as
       // UTC midnight, which renders as the previous day in western timezones.
-      return new Date(day + "T12:00:00").toLocaleDateString(undefined, {
-        weekday: "short", month: "short", day: "numeric",
-      });
+      const date = new Date(day + "T12:00:00");
+      const here = (d) => d.toLocaleDateString("en-CA");  // en-CA = YYYY-MM-DD
+      const now = new Date();
+      if (day === here(now)) return "Today";
+      if (day === here(new Date(now - 86400000))) return "Yesterday";
+      return date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     }
 
+    // ---- the lightbox and its playlist ----
+    // Every clip any opened day has loaded, newest first. The lightbox walks
+    // this list, so prev/next reach across day boundaries once both days have
+    // been opened. The zero-padded timestamp in the name sorts chronologically.
+    const playlist = new Map();  // name -> clip
+
+    function neighbors(name) {
+      const names = [...playlist.keys()].sort().reverse();
+      const i = names.indexOf(name);
+      return { newer: names[i - 1], older: names[i + 1] };
+    }
+
+    const lightbox = document.getElementById("lightbox");
+    const lbVideo = document.getElementById("lbVideo");
+    let showing = null;  // name of the clip on screen
+
+    function showClip(name) {
+      const clip = playlist.get(name);
+      if (!clip) return;
+      showing = name;
+      lbVideo.src = "/clips/" + encodeURIComponent(clip.name);
+      document.getElementById("lbWhen").textContent =
+        timeLabel(clip.recorded_at) + " · " + dayLabel((clip.recorded_at || "").slice(0, 10));
+      document.getElementById("lbSize").textContent = clip.size_human;
+      const dl = document.getElementById("lbDl");
+      dl.href = "/clips/" + encodeURIComponent(clip.name);
+      dl.download = clip.name;
+      const { newer, older } = neighbors(name);
+      document.getElementById("prev").disabled = !newer;
+      document.getElementById("next").disabled = !older;
+      if (!lightbox.open) lightbox.showModal();
+    }
+
+    function step(dir) {
+      const n = neighbors(showing)[dir];
+      if (n) showClip(n);
+    }
+
+    function closeLightbox() {
+      // Drop the src so the Pi stops streaming the moment the box closes.
+      lbVideo.pause();
+      lbVideo.removeAttribute("src");
+      lbVideo.load();
+      showing = null;
+      if (lightbox.open) lightbox.close();
+    }
+
+    document.getElementById("prev").addEventListener("click", () => step("newer"));
+    document.getElementById("next").addEventListener("click", () => step("older"));
+    document.getElementById("close").addEventListener("click", closeLightbox);
+    lightbox.addEventListener("cancel", closeLightbox);            // Esc
+    lightbox.addEventListener("click", (e) => {                    // backdrop tap
+      if (e.target === lightbox) closeLightbox();
+    });
+    lightbox.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") step("newer");
+      if (e.key === "ArrowRight") step("older");
+    });
+    let touchX = null;                                             // swipe
+    lightbox.addEventListener("touchstart", (e) => { touchX = e.touches[0].clientX; });
+    lightbox.addEventListener("touchend", (e) => {
+      if (touchX === null) return;
+      const dx = e.changedTouches[0].clientX - touchX;
+      touchX = null;
+      if (Math.abs(dx) > 50) step(dx > 0 ? "newer" : "older");
+    });
+
+    // ---- cards and day sections ----
     function clipCard(clip) {
       const card = document.createElement("div");
       card.className = "clip";
 
-      // The card starts as a poster <img> (a few KB, lazily fetched). The
-      // <video> — and any clip bytes at all — exist only after a tap.
+      // The card is a poster <img> (a few KB, lazily fetched). Video bytes
+      // move only inside the lightbox.
       const poster = document.createElement("button");
       poster.className = "poster";
       poster.title = "Play clip";
@@ -155,15 +336,7 @@
       badge.className = "badge";
       badge.textContent = "▶";
       poster.appendChild(badge);
-
-      poster.addEventListener("click", () => {
-        const video = document.createElement("video");
-        video.controls = true;
-        video.autoplay = true;
-        video.playsInline = true;
-        video.src = "/clips/" + encodeURIComponent(clip.name);
-        poster.replaceWith(video);
-      });
+      poster.addEventListener("click", () => showClip(clip.name));
       card.appendChild(poster);
 
       const meta = document.createElement("div");
@@ -174,15 +347,7 @@
       const size = document.createElement("span");
       size.className = "size";
       size.textContent = clip.size_human;
-      // Same URL the player streams from; the download attribute just tells
-      // the browser to save the bytes instead of playing them. Handy for
-      // pulling a clip onto the phone to rule out playback-side glitches.
-      const dl = document.createElement("a");
-      dl.className = "dl";
-      dl.href = "/clips/" + encodeURIComponent(clip.name);
-      dl.download = clip.name;
-      dl.textContent = "download";
-      meta.append(when, size, dl);
+      meta.append(when, size);
       card.appendChild(meta);
 
       return card;
@@ -213,12 +378,18 @@
       async function open() {
         section.dataset.open = "";
         grid.hidden = false;
-        if (loaded) return;
+        if (loaded) return [];
         loaded = true;  // one fetch per day, ever
+        grid.replaceChildren(...Array.from(
+          { length: Math.min(day.count, 4) },
+          () => Object.assign(document.createElement("div"), { className: "skeleton" }),
+        ));
         const res = await fetch("/api/clips?day=" + day.day);
         if (!res.ok) throw new Error("HTTP " + res.status);
         const clips = await res.json();
+        clips.forEach((c) => playlist.set(c.name, c));
         grid.replaceChildren(...clips.map(clipCard));
+        return clips;
       }
       head.addEventListener("click", () => {
         if (section.dataset.open !== undefined) {
@@ -233,6 +404,39 @@
       return section;
     }
 
+    // ---- hero ----
+    function renderHero(days, todaysClips) {
+      const latest = todaysClips[0];
+      if (!latest) return;
+      document.getElementById("hero").hidden = false;
+      const img = document.getElementById("heroImg");
+      if (latest.thumb) img.src = "/thumbs/" + encodeURIComponent(latest.thumb);
+      document.getElementById("heroWhen").textContent =
+        timeLabel(latest.recorded_at) + " · " + dayLabel(days[0].day);
+      document.getElementById("heroShot").addEventListener("click", () => showClip(latest.name));
+
+      // The stats line: how busy was the feeder, in one breath.
+      const total = days.reduce((n, d) => n + d.count, 0);
+      const parts = [];
+      if (dayLabel(days[0].day) === "Today") {
+        parts.push(days[0].count + (days[0].count === 1 ? " visit today" : " visits today"));
+      }
+      parts.push(total + (total === 1 ? " clip" : " clips") + " all time");
+      const hours = {};
+      for (const c of todaysClips) {
+        if (!c.recorded_at) continue;
+        const h = new Date(c.recorded_at).getHours();
+        hours[h] = (hours[h] || 0) + 1;
+      }
+      const busiest = Object.entries(hours).sort((a, b) => b[1] - a[1])[0];
+      if (busiest && busiest[1] >= 3) {
+        const h = Number(busiest[0]);
+        const fmt = (x) => new Date(2000, 0, 1, x).toLocaleTimeString(undefined, { hour: "numeric" });
+        parts.push("busiest " + fmt(h) + "–" + fmt(h + 1));
+      }
+      document.getElementById("stats").textContent = parts.join(" · ");
+    }
+
     function showError(e) {
       const error = document.getElementById("error");
       error.textContent = "Couldn't reach the Pi: " + e.message;
@@ -244,13 +448,13 @@
         const res = await fetch("/api/days");
         if (!res.ok) throw new Error("HTTP " + res.status);
         const days = await res.json();
-        const total = days.reduce((n, d) => n + d.count, 0);
-        document.getElementById("count").textContent =
-          total + (total === 1 ? " clip" : " clips");
         document.getElementById("empty").hidden = days.length > 0;
         const sections = days.map((d) => daySection(d));
         document.getElementById("days").replaceChildren(...sections);
-        if (sections.length) await sections[0].open();  // today opens itself
+        if (sections.length) {
+          const newest = await sections[0].open();  // the latest day opens itself
+          renderHero(days, newest);
+        }
       } catch (e) {
         showError(e);
       }
