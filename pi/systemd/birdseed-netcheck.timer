@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the birdseed network check periodically
+
+[Timer]
+# Give the normal boot-time network bring-up a few minutes before the first
+# check, so a merely-slow boot never trips the reboot escalation. Then every
+# 2 minutes; with REBOOT_AFTER=5 that's ~10 min of real outage before a reboot.
+OnBootSec=3min
+OnUnitActiveSec=2min
+# Don't fire a backlog of missed checks at once after downtime.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

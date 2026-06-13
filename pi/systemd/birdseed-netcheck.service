@@ -1,0 +1,7 @@
+[Unit]
+Description=birdseed network self-heal — rejoin Wi-Fi, reboot if wedged
+# Runs as root (no User=) because it restarts NetworkManager and may reboot.
+
+[Service]
+Type=oneshot
+ExecStart=/home/steelheadforever/birdseed/pi/systemd/birdseed-netcheck.sh
