@@ -1,22 +1,23 @@
 <!DOCTYPE html>
 <!--
-  birdseed — phase 5 gallery (placeholder for the phase-6 PWA).
+  birdseed — phase 5 gallery + settings (placeholder for the phase-6 PWA).
 
   This page is deliberately dumb: the Pi serves data (JSON) + static bytes;
   the client does the rendering. Same "dumb device, smart client" split as
   bird-ID-on-the-phone. No framework, no build step — one file you can read
   top to bottom.
 
-  It's also deliberately lazy, because the server is a Pi Zero serving off an
-  SD card. Three rules keep the load tiny:
-    1. /api/days first (a few bytes) — sections render before any clip data.
-    2. A day's clip list is fetched only when that day is opened.
-    3. Cards are poster JPEGs (<img loading="lazy">, so only the visible ones
-       are fetched). A <video> exists only in the lightbox — video bytes move
-       only when someone is actually watching.
+  Two tabs:
+    Gallery  — lazy day-sectioned clip browser with a lightbox player.
+    Settings — device health (Wi-Fi/power/temp/storage/version) and controls
+               (focus calibration, recording params, reboot/restart).
 
-  The look: a field journal, not a security console. Bark, moss, and cream —
-  the clips are the design; everything else stays quiet.
+  The settings controls never reach the camera directly — the server has no
+  picamera2. The UI posts a request; the recorder (sole camera owner) runs it.
+  Because that command queue is depth-1, the UI serializes camera commands:
+  one in flight at a time, button disabled until it returns.
+
+  The look: a field journal, not a security console. Bark, moss, and cream.
 -->
 <html lang="en">
 <head>
@@ -27,8 +28,6 @@
   <style>
     :root {
       color-scheme: dark;
-      /* The whole palette, named once. Bark for surfaces, moss for action,
-         cream for words, tan for asides. */
       --night: #171310;
       --bark: #221b15;
       --bark-edge: #382c21;
@@ -44,29 +43,32 @@
       background: var(--night); color: var(--cream);
     }
 
-    header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1.25rem; }
+    header { display: flex; align-items: center; gap: .75rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
     h1 { font-size: 1.5rem; margin: 0; letter-spacing: .01em; }
     header .tagline { color: var(--tan); font-size: .9rem; font-style: italic; }
     @media (max-width: 560px) { header .tagline { display: none; } }
+
+    /* ---- tab bar ---- */
+    .tabs { display: flex; gap: .4rem; margin-left: auto; }
+    .tabs button {
+      cursor: pointer; font: inherit; font-size: .9rem; color: var(--tan);
+      background: var(--bark); border: 1px solid var(--bark-edge); border-radius: 8px;
+      padding: .35rem .9rem;
+    }
+    .tabs button[aria-selected="true"] { color: var(--cream); background: var(--bark-edge); border-color: var(--moss-deep); }
+    .panel[hidden] { display: none; }
+
     #flip {
-      margin-left: auto; cursor: pointer;
-      font: inherit; font-size: .85rem; color: var(--cream);
+      cursor: pointer; font: inherit; font-size: .85rem; color: var(--cream);
       background: var(--bark); border: 1px solid var(--bark-edge); border-radius: 8px;
       padding: .3rem .7rem;
     }
     #flip[aria-pressed="true"] { background: var(--bark-edge); }
-    /* The flip is pure presentation: the .mp4 bytes are untouched; the browser
-       just draws everything upside-down. New clips are flipped on the Pi
-       itself; this stays for the clips recorded before that. */
     body.flipped video, body.flipped .poster img, body.flipped #heroShot img { transform: rotate(180deg); }
-    /* Native controls render *inside* the <video>, so they flip with it.
-       Counter-rotating the controls' shadow root puts them back upright.
-       WebKit/Blink only — Firefox keeps upside-down controls, and iOS's
-       native fullscreen player ignores page CSS entirely (inline playback
-       is fine). Cosmetic either way: clicks still land correctly. */
     body.flipped video::-webkit-media-controls { transform: rotate(180deg); }
 
-    /* ---- hero: the page opens by answering "who came by last?" ---- */
+    /* ---- gallery: hero ---- */
+    .galbar { display: flex; align-items: baseline; margin-bottom: 1rem; }
     #hero { margin-bottom: 1.75rem; }
     #heroShot {
       position: relative; display: block; width: 100%; padding: 0;
@@ -80,20 +82,13 @@
       display: flex; flex-direction: column; align-items: flex-start; gap: .1rem;
       text-align: left;
     }
-    #heroShot .kicker {
-      font-size: .72rem; letter-spacing: .14em; text-transform: uppercase;
-      color: var(--moss); font-weight: 600;
-    }
+    #heroShot .kicker { font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--moss); font-weight: 600; }
     #heroShot .when { font-size: 1.25rem; font-weight: 650; color: var(--cream); }
-    #stats {
-      margin: .6rem .2rem 0; color: var(--tan); font-size: .9rem;
-      font-variant-numeric: tabular-nums;
-    }
+    #stats { margin: .6rem .2rem 0; color: var(--tan); font-size: .9rem; font-variant-numeric: tabular-nums; }
 
-    /* ---- day sections ---- */
+    /* ---- gallery: day sections ---- */
     .day { margin-bottom: .5rem; }
     .day > button {
-      /* The whole day header is the open/close control. */
       display: flex; align-items: baseline; gap: .6rem; width: 100%;
       cursor: pointer; text-align: left;
       font: inherit; color: inherit; background: none; border: none;
@@ -105,92 +100,160 @@
     .day[data-open] .chev { transform: rotate(90deg); }
 
     .grid { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); padding: .25rem 0 1rem; }
-    .clip {
-      background: var(--bark); border: 1px solid var(--bark-edge); border-radius: 12px;
-      overflow: hidden; transition: transform .15s, border-color .15s;
-    }
+    .clip { background: var(--bark); border: 1px solid var(--bark-edge); border-radius: 12px; overflow: hidden; transition: transform .15s, border-color .15s; }
     .clip:hover { transform: translateY(-2px); border-color: var(--moss-deep); }
-    .poster {
-      position: relative; display: block; width: 100%; padding: 0;
-      cursor: pointer; background: #000; border: none; aspect-ratio: 16 / 9;
-    }
+    .poster { position: relative; display: block; width: 100%; padding: 0; cursor: pointer; background: #000; border: none; aspect-ratio: 16 / 9; }
     .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .poster .badge {
-      position: absolute; inset: 0; display: grid; place-items: center;
-      font-size: 2rem; color: var(--cream); text-shadow: 0 1px 8px rgba(0,0,0,.7);
-      opacity: .85;
-    }
+    .poster .badge { position: absolute; inset: 0; display: grid; place-items: center; font-size: 2rem; color: var(--cream); text-shadow: 0 1px 8px rgba(0,0,0,.7); opacity: .85; }
     .poster.noimg .badge { color: var(--tan); }
-    .meta {
-      padding: .55rem .8rem; display: flex; align-items: baseline; gap: .5rem;
-      font-variant-numeric: tabular-nums;
-    }
+    .meta { padding: .55rem .8rem; display: flex; align-items: baseline; gap: .5rem; font-variant-numeric: tabular-nums; }
     .meta .when { font-weight: 600; }
     .meta .size { color: var(--tan); margin-left: auto; font-size: .9rem; }
 
-    /* Skeletons: what a day looks like for the beat between tap and data. */
     .skeleton { border-radius: 12px; aspect-ratio: 16 / 9; border: 1px solid var(--bark-edge);
       background: linear-gradient(100deg, var(--bark) 40%, var(--bark-edge) 50%, var(--bark) 60%);
-      background-size: 300% 100%; animation: shimmer 1.2s infinite linear;
-    }
+      background-size: 300% 100%; animation: shimmer 1.2s infinite linear; }
     @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
-    /* ---- lightbox: one clip, big, with neighbors a key-press away ---- */
-    #lightbox {
-      border: 1px solid var(--bark-edge); border-radius: 16px; padding: 0;
-      background: var(--bark); color: var(--cream);
-      width: min(94vw, 1100px);
-    }
+    /* ---- lightbox ---- */
+    #lightbox { border: 1px solid var(--bark-edge); border-radius: 16px; padding: 0; background: var(--bark); color: var(--cream); width: min(94vw, 1100px); }
     #lightbox::backdrop { background: rgba(10, 8, 6, .82); backdrop-filter: blur(3px); }
     #lightbox video { width: 100%; max-height: 74vh; display: block; background: #000; aspect-ratio: 16 / 9; }
-    #lightbox .bar {
-      display: flex; align-items: baseline; gap: .75rem; padding: .7rem 1rem;
-      font-variant-numeric: tabular-nums;
-    }
+    #lightbox .bar { display: flex; align-items: baseline; gap: .75rem; padding: .7rem 1rem; font-variant-numeric: tabular-nums; }
     #lightbox .bar .when { font-weight: 650; }
     #lightbox .bar .size { color: var(--tan); font-size: .9rem; }
     #lightbox .bar .dl { margin-left: auto; color: var(--moss); text-decoration: none; }
     #lightbox .bar .dl:hover { text-decoration: underline; }
-    #lightbox .nav {
-      position: absolute; top: 0; bottom: 3.2rem; width: 4.5rem;
-      display: grid; place-items: center; cursor: pointer;
-      font-size: 2rem; color: var(--cream); background: none; border: none;
-      opacity: 0; transition: opacity .15s; text-shadow: 0 1px 8px rgba(0,0,0,.8);
-    }
+    #lightbox .nav { position: absolute; top: 0; bottom: 3.2rem; width: 4.5rem; display: grid; place-items: center; cursor: pointer; font-size: 2rem; color: var(--cream); background: none; border: none; opacity: 0; transition: opacity .15s; text-shadow: 0 1px 8px rgba(0,0,0,.8); }
     #lightbox:hover .nav:not(:disabled) { opacity: .9; }
     #lightbox .nav:disabled { cursor: default; }
     #prev { left: 0; } #next { right: 0; }
-    #close {
-      position: absolute; top: .4rem; right: .6rem; cursor: pointer;
-      font-size: 1.4rem; color: var(--cream); background: none; border: none;
-      text-shadow: 0 1px 8px rgba(0,0,0,.8);
-    }
+    #close { position: absolute; top: .4rem; right: .6rem; cursor: pointer; font-size: 1.4rem; color: var(--cream); background: none; border: none; text-shadow: 0 1px 8px rgba(0,0,0,.8); }
 
     .empty, .error { color: var(--tan); padding: 2rem 0; }
     .error { color: var(--alarm); }
+
+    /* ---- settings ---- */
+    .cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); margin-bottom: 1.5rem; }
+    .card { background: var(--bark); border: 1px solid var(--bark-edge); border-radius: 12px; padding: 1rem 1.1rem; }
+    .card h3 { margin: 0 0 .6rem; font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; color: var(--moss); }
+    .card .big { font-size: 1.6rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .card .rows { display: grid; gap: .25rem; font-size: .9rem; }
+    .card .rows div { display: flex; justify-content: space-between; gap: 1rem; }
+    .card .rows .k { color: var(--tan); }
+    .card .rows .v { font-variant-numeric: tabular-nums; text-align: right; }
+    .ok { color: var(--moss); } .warn { color: var(--alarm); }
+    .pill { display: inline-block; font-size: .75rem; padding: .05rem .5rem; border-radius: 999px; border: 1px solid var(--bark-edge); color: var(--tan); }
+    .pill.good { color: var(--moss); border-color: var(--moss-deep); }
+    .pill.bad { color: var(--alarm); border-color: var(--alarm); }
+
+    .control { background: var(--bark); border: 1px solid var(--bark-edge); border-radius: 12px; padding: 1.1rem 1.2rem; margin-bottom: 1.25rem; }
+    .control h3 { margin: 0 0 .8rem; font-size: 1rem; }
+    .control label { display: block; font-size: .85rem; color: var(--tan); margin: .6rem 0 .2rem; }
+    .control input[type=range] { width: 100%; accent-color: var(--moss); }
+    .control input[type=number], .control select {
+      font: inherit; color: var(--cream); background: var(--night);
+      border: 1px solid var(--bark-edge); border-radius: 8px; padding: .35rem .5rem; width: 100%;
+    }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+    .btn {
+      cursor: pointer; font: inherit; font-size: .9rem; color: var(--cream);
+      background: var(--moss-deep); border: 1px solid var(--moss-deep); border-radius: 8px;
+      padding: .45rem 1rem; margin: .8rem .4rem 0 0;
+    }
+    .btn.secondary { background: var(--bark); border-color: var(--bark-edge); }
+    .btn.danger { background: var(--bark); border-color: var(--alarm); color: var(--alarm); }
+    .btn:disabled { opacity: .5; cursor: default; }
+    #focusPreview { width: 100%; max-width: 480px; border-radius: 10px; border: 1px solid var(--bark-edge); display: block; margin-top: .8rem; background: #000; aspect-ratio: 16/9; object-fit: cover; }
+    #focusPreview[hidden] { display: none; }  /* the explicit display:block above would otherwise defeat the hidden attribute */
+    .focusline { margin-top: .5rem; font-size: .9rem; color: var(--tan); font-variant-numeric: tabular-nums; }
+    .saved { color: var(--moss); font-size: .85rem; margin-left: .5rem; }
   </style>
 </head>
 <body>
   <header>
     <h1>🐦 birdseed</h1>
     <span class="tagline">what the feeder saw</span>
-    <button id="flip" aria-pressed="false" title="Rotate all clips 180°">⟲ flip view</button>
+    <div class="tabs" role="tablist">
+      <button id="tabGallery" role="tab" aria-selected="true">Gallery</button>
+      <button id="tabSettings" role="tab" aria-selected="false">Settings</button>
+    </div>
   </header>
 
-  <section id="hero" hidden>
-    <button id="heroShot" title="Play the latest clip">
-      <img id="heroImg" alt="" />
-      <span class="scrim">
-        <span class="kicker">last visitor</span>
-        <span class="when" id="heroWhen"></span>
-      </span>
-    </button>
-    <p id="stats"></p>
-  </section>
+  <!-- ============ GALLERY TAB ============ -->
+  <main class="panel" id="panelGallery">
+    <div class="galbar">
+      <button id="flip" aria-pressed="false" title="Rotate all clips 180°">⟲ flip view</button>
+    </div>
 
-  <div id="days"></div>
-  <p class="empty" id="empty" hidden>No clips yet. Trip the sensor and one will show up here.</p>
-  <p class="error" id="error" hidden></p>
+    <section id="hero" hidden>
+      <button id="heroShot" title="Play the latest clip">
+        <img id="heroImg" alt="" />
+        <span class="scrim">
+          <span class="kicker">last visitor</span>
+          <span class="when" id="heroWhen"></span>
+        </span>
+      </button>
+      <p id="stats"></p>
+    </section>
+
+    <div id="days"></div>
+    <p class="empty" id="empty" hidden>No clips yet. Trip the sensor and one will show up here.</p>
+    <p class="error" id="error" hidden></p>
+  </main>
+
+  <!-- ============ SETTINGS TAB ============ -->
+  <main class="panel" id="panelSettings" hidden>
+    <div class="cards" id="healthCards"></div>
+
+    <div class="control">
+      <h3>Focus — fixed at the perch</h3>
+      <label for="lens">Lens position: <span id="lensLabel"></span></label>
+      <input type="range" id="lens" min="0" max="10" step="0.5" value="10" />
+      <div class="focusline" id="focusFom"></div>
+      <img id="focusPreview" alt="focus preview" hidden />
+      <div>
+        <button class="btn" id="snapBtn">Take snapshot at this focus</button>
+        <button class="btn secondary" id="afBtn">Autofocus &amp; adopt</button>
+        <button class="btn secondary" id="saveFocusBtn">Save focus</button>
+        <span class="saved" id="focusSaved" hidden>saved ✓</span>
+      </div>
+    </div>
+
+    <div class="control">
+      <h3>Recording</h3>
+      <div class="row2">
+        <div>
+          <label for="clipLen">Clip length (seconds)</label>
+          <input type="number" id="clipLen" min="1" max="60" step="1" />
+        </div>
+        <div>
+          <label for="bitrate">Bitrate</label>
+          <select id="bitrate">
+            <option value="4000000">4 Mbps (smaller files)</option>
+            <option value="6000000">6 Mbps</option>
+            <option value="8000000">8 Mbps (default)</option>
+            <option value="10000000">10 Mbps</option>
+            <option value="12000000">12 Mbps (sharper)</option>
+          </select>
+        </div>
+      </div>
+      <label style="margin-top:.8rem"><input type="checkbox" id="rotate" /> Rotate clips 180° on the device (camera mounted upside-down)</label>
+      <div>
+        <button class="btn" id="saveRecBtn">Save recording settings</button>
+        <span class="saved" id="recSaved" hidden>saved ✓</span>
+      </div>
+    </div>
+
+    <div class="control">
+      <h3>System</h3>
+      <p style="color:var(--tan);font-size:.9rem;margin:.2rem 0 .4rem">Recover the feeder without walking out to it.</p>
+      <button class="btn secondary" id="restartBtn">Restart services</button>
+      <button class="btn danger" id="rebootBtn">Reboot Pi</button>
+      <span class="saved" id="sysMsg" hidden></span>
+    </div>
+    <p class="error" id="settingsError" hidden></p>
+  </main>
 
   <dialog id="lightbox">
     <video id="lbVideo" controls autoplay playsinline></video>
@@ -205,60 +268,67 @@
   </dialog>
 
   <script>
-    // Orientation lives in the browser (localStorage), per the "dumb device"
-    // split: the Pi records whatever the sensor sees; how it's displayed is
-    // the client's problem. New clips are flipped at capture time on the Pi;
-    // this button is for viewing the old upside-down ones.
-    const FLIP_KEY = "birdseed.flip";
+    // ============ tabs ============
+    const panels = { gallery: document.getElementById("panelGallery"), settings: document.getElementById("panelSettings") };
+    const tabs = { gallery: document.getElementById("tabGallery"), settings: document.getElementById("tabSettings") };
+    let settingsTimer = null;
 
-    function applyFlip(on) {
-      document.body.classList.toggle("flipped", on);
-      document.getElementById("flip").setAttribute("aria-pressed", String(on));
+    function showTab(name) {
+      for (const key of ["gallery", "settings"]) {
+        panels[key].hidden = key !== name;
+        tabs[key].setAttribute("aria-selected", String(key === name));
+      }
+      // Only poll health while the settings tab is actually visible — no point
+      // hammering the Pi for telemetry nobody's looking at.
+      if (name === "settings") {
+        loadSettings();
+        refreshHealth();
+        settingsTimer = setInterval(refreshHealth, 5000);
+      } else if (settingsTimer) {
+        clearInterval(settingsTimer);
+        settingsTimer = null;
+      }
     }
+    tabs.gallery.addEventListener("click", () => showTab("gallery"));
+    tabs.settings.addEventListener("click", () => showTab("settings"));
 
-    document.getElementById("flip").addEventListener("click", () => {
-      const on = !document.body.classList.contains("flipped");
-      localStorage.setItem(FLIP_KEY, on ? "1" : "");
-      applyFlip(on);
-    });
-
-    applyFlip(Boolean(localStorage.getItem(FLIP_KEY)));
-
-    // The day section gives the date; cards only need the time of day.
+    // ============ shared helpers ============
     function timeLabel(iso) {
       if (!iso) return "unknown time";
-      return new Date(iso).toLocaleTimeString(undefined, {
-        hour: "numeric", minute: "2-digit", second: "2-digit",
-      });
+      return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
     }
-
     function dayLabel(day) {
-      // day is YYYY-MM-DD. Parse at local noon — a bare date string parses as
-      // UTC midnight, which renders as the previous day in western timezones.
       const date = new Date(day + "T12:00:00");
-      const here = (d) => d.toLocaleDateString("en-CA");  // en-CA = YYYY-MM-DD
+      const here = (d) => d.toLocaleDateString("en-CA");
       const now = new Date();
       if (day === here(now)) return "Today";
       if (day === here(new Date(now - 86400000))) return "Yesterday";
       return date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     }
 
-    // ---- the lightbox and its playlist ----
-    // Every clip any opened day has loaded, newest first. The lightbox walks
-    // this list, so prev/next reach across day boundaries once both days have
-    // been opened. The zero-padded timestamp in the name sorts chronologically.
-    const playlist = new Map();  // name -> clip
+    // ============ flip (gallery) ============
+    const FLIP_KEY = "birdseed.flip";
+    function applyFlip(on) {
+      document.body.classList.toggle("flipped", on);
+      document.getElementById("flip").setAttribute("aria-pressed", String(on));
+    }
+    document.getElementById("flip").addEventListener("click", () => {
+      const on = !document.body.classList.contains("flipped");
+      localStorage.setItem(FLIP_KEY, on ? "1" : "");
+      applyFlip(on);
+    });
+    applyFlip(Boolean(localStorage.getItem(FLIP_KEY)));
 
+    // ============ lightbox (gallery) ============
+    const playlist = new Map();
     function neighbors(name) {
       const names = [...playlist.keys()].sort().reverse();
       const i = names.indexOf(name);
       return { newer: names[i - 1], older: names[i + 1] };
     }
-
     const lightbox = document.getElementById("lightbox");
     const lbVideo = document.getElementById("lbVideo");
-    let showing = null;  // name of the clip on screen
-
+    let showing = null;
     function showClip(name) {
       const clip = playlist.get(name);
       if (!clip) return;
@@ -275,66 +345,45 @@
       document.getElementById("next").disabled = !older;
       if (!lightbox.open) lightbox.showModal();
     }
-
-    function step(dir) {
-      const n = neighbors(showing)[dir];
-      if (n) showClip(n);
-    }
-
+    function step(dir) { const n = neighbors(showing)[dir]; if (n) showClip(n); }
     function closeLightbox() {
-      // Drop the src so the Pi stops streaming the moment the box closes.
-      lbVideo.pause();
-      lbVideo.removeAttribute("src");
-      lbVideo.load();
+      lbVideo.pause(); lbVideo.removeAttribute("src"); lbVideo.load();
       showing = null;
       if (lightbox.open) lightbox.close();
     }
-
     document.getElementById("prev").addEventListener("click", () => step("newer"));
     document.getElementById("next").addEventListener("click", () => step("older"));
     document.getElementById("close").addEventListener("click", closeLightbox);
-    lightbox.addEventListener("cancel", closeLightbox);            // Esc
-    lightbox.addEventListener("click", (e) => {                    // backdrop tap
-      if (e.target === lightbox) closeLightbox();
-    });
+    lightbox.addEventListener("cancel", closeLightbox);
+    lightbox.addEventListener("click", (e) => { if (e.target === lightbox) closeLightbox(); });
     lightbox.addEventListener("keydown", (e) => {
       if (e.key === "ArrowLeft") step("newer");
       if (e.key === "ArrowRight") step("older");
     });
-    let touchX = null;                                             // swipe
+    let touchX = null;
     lightbox.addEventListener("touchstart", (e) => { touchX = e.touches[0].clientX; });
     lightbox.addEventListener("touchend", (e) => {
       if (touchX === null) return;
-      const dx = e.changedTouches[0].clientX - touchX;
-      touchX = null;
+      const dx = e.changedTouches[0].clientX - touchX; touchX = null;
       if (Math.abs(dx) > 50) step(dx > 0 ? "newer" : "older");
     });
 
-    // ---- cards and day sections ----
+    // ============ gallery cards / days / hero ============
     function clipCard(clip) {
       const card = document.createElement("div");
       card.className = "clip";
-
-      // The card is a poster <img> (a few KB, lazily fetched). Video bytes
-      // move only inside the lightbox.
       const poster = document.createElement("button");
       poster.className = "poster";
       poster.title = "Play clip";
       if (clip.thumb) {
         const img = document.createElement("img");
-        img.loading = "lazy";
-        img.alt = "";
+        img.loading = "lazy"; img.alt = "";
         img.src = "/thumbs/" + encodeURIComponent(clip.thumb);
-        // A listed thumb that 404s mid-flight (e.g. just pruned) degrades to
-        // the same placeholder look as a clip with no poster at all.
         img.onerror = () => { img.remove(); poster.classList.add("noimg"); };
         poster.appendChild(img);
-      } else {
-        poster.classList.add("noimg");
-      }
+      } else { poster.classList.add("noimg"); }
       const badge = document.createElement("span");
-      badge.className = "badge";
-      badge.textContent = "▶";
+      badge.className = "badge"; badge.textContent = "▶";
       poster.appendChild(badge);
       poster.addEventListener("click", () => showClip(clip.name));
       card.appendChild(poster);
@@ -342,36 +391,29 @@
       const meta = document.createElement("div");
       meta.className = "meta";
       const when = document.createElement("span");
-      when.className = "when";
-      when.textContent = timeLabel(clip.recorded_at);
+      when.className = "when"; when.textContent = timeLabel(clip.recorded_at);
       const size = document.createElement("span");
-      size.className = "size";
-      size.textContent = clip.size_human;
+      size.className = "size"; size.textContent = clip.size_human;
       meta.append(when, size);
       card.appendChild(meta);
-
       return card;
     }
 
     function daySection(day) {
       const section = document.createElement("section");
       section.className = "day";
-
       const head = document.createElement("button");
-      const title = document.createElement("h2");
-      title.textContent = dayLabel(day.day);
+      const title = document.createElement("h2"); title.textContent = dayLabel(day.day);
       const daycount = document.createElement("span");
       daycount.className = "daycount";
       daycount.textContent = day.count + (day.count === 1 ? " clip" : " clips");
       const chev = document.createElement("span");
-      chev.className = "chev";
-      chev.textContent = "›";
+      chev.className = "chev"; chev.textContent = "›";
       head.append(title, daycount, chev);
       section.appendChild(head);
 
       const grid = document.createElement("div");
-      grid.className = "grid";
-      grid.hidden = true;
+      grid.className = "grid"; grid.hidden = true;
       section.appendChild(grid);
 
       let loaded = false;
@@ -379,7 +421,7 @@
         section.dataset.open = "";
         grid.hidden = false;
         if (loaded) return [];
-        loaded = true;  // one fetch per day, ever
+        loaded = true;
         grid.replaceChildren(...Array.from(
           { length: Math.min(day.count, 4) },
           () => Object.assign(document.createElement("div"), { className: "skeleton" }),
@@ -393,34 +435,25 @@
       }
       head.addEventListener("click", () => {
         if (section.dataset.open !== undefined) {
-          delete section.dataset.open;
-          grid.hidden = true;  // collapse only hides; nothing refetches
-        } else {
-          open().catch(showError);
-        }
+          delete section.dataset.open; grid.hidden = true;
+        } else { open().catch(showError); }
       });
-
-      section.open = open;  // so load() can auto-open the newest day
+      section.open = open;
       return section;
     }
 
-    // ---- hero ----
     function renderHero(days, todaysClips) {
       const latest = todaysClips[0];
       if (!latest) return;
       document.getElementById("hero").hidden = false;
       const img = document.getElementById("heroImg");
       if (latest.thumb) img.src = "/thumbs/" + encodeURIComponent(latest.thumb);
-      document.getElementById("heroWhen").textContent =
-        timeLabel(latest.recorded_at) + " · " + dayLabel(days[0].day);
+      document.getElementById("heroWhen").textContent = timeLabel(latest.recorded_at) + " · " + dayLabel(days[0].day);
       document.getElementById("heroShot").addEventListener("click", () => showClip(latest.name));
 
-      // The stats line: how busy was the feeder, in one breath.
       const total = days.reduce((n, d) => n + d.count, 0);
       const parts = [];
-      if (dayLabel(days[0].day) === "Today") {
-        parts.push(days[0].count + (days[0].count === 1 ? " visit today" : " visits today"));
-      }
+      if (dayLabel(days[0].day) === "Today") parts.push(days[0].count + (days[0].count === 1 ? " visit today" : " visits today"));
       parts.push(total + (total === 1 ? " clip" : " clips") + " all time");
       const hours = {};
       for (const c of todaysClips) {
@@ -443,7 +476,7 @@
       error.hidden = false;
     }
 
-    async function load() {
+    async function loadGallery() {
       try {
         const res = await fetch("/api/days");
         if (!res.ok) throw new Error("HTTP " + res.status);
@@ -451,16 +484,202 @@
         document.getElementById("empty").hidden = days.length > 0;
         const sections = days.map((d) => daySection(d));
         document.getElementById("days").replaceChildren(...sections);
-        if (sections.length) {
-          const newest = await sections[0].open();  // the latest day opens itself
-          renderHero(days, newest);
-        }
+        if (sections.length) { const newest = await sections[0].open(); renderHero(days, newest); }
+      } catch (e) { showError(e); }
+    }
+
+    // ============ settings: helpers ============
+    const dash = (v, suffix = "") => (v === null || v === undefined ? "—" : v + suffix);
+    function fmtBytes(n) {
+      if (n === null || n === undefined) return "—";
+      const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; let x = n;
+      while (x >= 1024 && i < u.length - 1) { x /= 1024; i++; }
+      return x.toFixed(i ? 1 : 0) + " " + u[i];
+    }
+    function fmtUptime(s) {
+      if (!s) return "—";
+      const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+      return (d ? d + "d " : "") + (h ? h + "h " : "") + m + "m";
+    }
+    function signalWord(dbm) {
+      if (dbm === null || dbm === undefined) return "";
+      if (dbm >= -55) return "excellent"; if (dbm >= -65) return "good";
+      if (dbm >= -72) return "ok"; return "weak";
+    }
+    function lensLabel(lens) {
+      lens = Number(lens);
+      if (lens <= 0) return "∞ (infinity)";
+      return (100 / lens).toFixed(0) + " cm";
+    }
+
+    function card(title, bodyHtml) {
+      return `<div class="card"><h3>${title}</h3>${bodyHtml}</div>`;
+    }
+    function rows(pairs) {
+      return `<div class="rows">${pairs.map(([k, v]) => `<div><span class="k">${k}</span><span class="v">${v}</span></div>`).join("")}</div>`;
+    }
+
+    function renderHealth(h) {
+      const cards = [];
+      // Wi-Fi
+      const w = h.wifi || {};
+      cards.push(card("Wi-Fi", w.connected
+        ? `<div class="big">${dash(w.signal_dbm, " dBm")}</div>` + rows([
+            ["quality", signalWord(w.signal_dbm) || "—"], ["network", dash(w.ssid)], ["link", dash(w.bitrate_mbps, " Mbps")]])
+        : `<div class="big warn">offline</div>`));
+      // Power
+      const p = h.power || {};
+      const pclass = p.healthy === false ? "warn" : (p.healthy ? "ok" : "");
+      cards.push(card("Power", `<div class="big ${pclass}">${p.healthy === null ? "—" : p.healthy ? "clean" : "issues"}</div>` +
+        rows([["throttle flags", p.flags && p.flags.length ? p.flags.join("; ") : "none"], ["raw", dash(p.raw)]])));
+      // Temperature
+      const t = h.temperature_c;
+      const tclass = t === null || t === undefined ? "" : (t >= 80 ? "warn" : "ok");
+      cards.push(card("Temperature", `<div class="big ${tclass}">${dash(t, " °C")}</div>`));
+      // Storage
+      const s = h.storage || {};
+      cards.push(card("Storage", `<div class="big">${dash(s.cap_used_pct, "%")}</div>` + rows([
+        ["clips", dash(s.clip_count)], ["used", fmtBytes(s.clips_bytes)],
+        ["cap", fmtBytes(s.cap_bytes)], ["card free", fmtBytes(s.disk_free_bytes)]])));
+      // System
+      const sys = h.system || {};
+      const svc = sys.services || {};
+      const svcPill = (name) => {
+        const st = svc[name] || "unknown";
+        const cls = st === "active" ? "good" : (st === "unknown" ? "" : "bad");
+        return `<span class="pill ${cls}">${name.replace("birdseed-", "")}: ${st}</span>`;
+      };
+      cards.push(card("System", rows([
+        ["uptime", fmtUptime(sys.uptime_s)], ["load", dash(sys.load_1m)],
+        ["memory used", dash(sys.mem_used_pct, "%")], ["clock", sys.ntp_synced ? "synced ✓" : "NOT synced"]]) +
+        `<div style="margin-top:.5rem">${svcPill("birdseed-recorder")} ${svcPill("birdseed-server")}</div>`));
+      // Build / version
+      const b = h.build || {};
+      cards.push(card("Build", rows([["fingerprint", dash(b.fingerprint)], ["files updated", dash(b.newest_mtime)]])));
+      // Camera focus
+      const c = h.camera || {};
+      cards.push(card("Camera focus", `<div class="big">${c.focus_distance_m ? (c.focus_distance_m * 100).toFixed(0) + " cm" : "—"}</div>` +
+        rows([["lens position", dash(c.lens_position)], ["clip length", dash(c.clip_seconds, " s")],
+              ["bitrate", c.bitrate ? (c.bitrate / 1e6) + " Mbps" : "—"]])));
+      // Battery placeholder (solar phase)
+      cards.push(card("Battery", `<div class="big">—</div><div class="rows"><div><span class="k">awaiting INA219 sensor</span><span class="v"></span></div></div>`));
+
+      document.getElementById("healthCards").innerHTML = cards.join("");
+    }
+
+    async function refreshHealth() {
+      try {
+        const res = await fetch("/api/health");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        renderHealth(await res.json());
+        document.getElementById("settingsError").hidden = true;
       } catch (e) {
-        showError(e);
+        const err = document.getElementById("settingsError");
+        err.textContent = "Couldn't reach the Pi: " + e.message; err.hidden = false;
       }
     }
 
-    load();
+    // ============ settings: form load ============
+    const lens = document.getElementById("lens");
+    lens.addEventListener("input", () => { document.getElementById("lensLabel").textContent = lensLabel(lens.value); });
+
+    async function loadSettings() {
+      try {
+        const s = await (await fetch("/api/settings")).json();
+        lens.value = s.lens_position;
+        document.getElementById("lensLabel").textContent = lensLabel(s.lens_position);
+        document.getElementById("clipLen").value = s.clip_seconds;
+        document.getElementById("bitrate").value = String(s.bitrate);
+        document.getElementById("rotate").checked = !!s.rotate_180;
+      } catch (e) { /* health error path already surfaces connectivity */ }
+    }
+
+    async function saveSettings(body, savedEl) {
+      const res = await fetch("/api/settings", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      if (savedEl) { savedEl.hidden = false; setTimeout(() => { savedEl.hidden = true; }, 1800); }
+      return res.json();
+    }
+
+    // ============ settings: camera commands (serialized, depth-1 queue) ============
+    let commandBusy = false;
+    const camButtons = ["snapBtn", "afBtn"].map((id) => document.getElementById(id));
+    function setBusy(on) { commandBusy = on; camButtons.forEach((b) => (b.disabled = on)); }
+
+    async function runCommand(action, params) {
+      // The recorder's command queue is depth-1 and a clip in progress can delay
+      // execution ~12 s, so we serialize and poll patiently rather than spam.
+      setBusy(true);
+      try {
+        const post = await fetch("/api/command", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action, params }),
+        });
+        if (!post.ok) throw new Error("HTTP " + post.status);
+        const { id } = await post.json();
+        for (let i = 0; i < 30; i++) {       // up to ~30 s (covers a recording)
+          await new Promise((r) => setTimeout(r, 1000));
+          const r = await (await fetch("/api/command/" + id)).json();
+          if (r.status === "done") return r;
+        }
+        throw new Error("timed out waiting for the camera");
+      } finally { setBusy(false); }
+    }
+
+    document.getElementById("snapBtn").addEventListener("click", async () => {
+      const fom = document.getElementById("focusFom");
+      fom.textContent = "capturing…";
+      try {
+        const r = await runCommand("snapshot", { lens_position: Number(lens.value) });
+        if (!r.ok) throw new Error(r.error || "snapshot failed");
+        const img = document.getElementById("focusPreview");
+        img.src = "/snapshot.jpg?t=" + Date.now();   // cache-bust each capture
+        img.hidden = false;
+        fom.textContent = "sharpness (focus FoM): " + dash(r.focus && r.focus.focus_fom) +
+          "  ·  higher = sharper. Tune the slider and re-snap to maximize it.";
+      } catch (e) { fom.textContent = "✕ " + e.message; }
+    });
+
+    document.getElementById("afBtn").addEventListener("click", async () => {
+      const fom = document.getElementById("focusFom");
+      fom.textContent = "running autofocus…";
+      try {
+        const r = await runCommand("autofocus", {});
+        if (!r.ok) throw new Error(r.error || "autofocus failed");
+        const lp = r.focus && r.focus.lens_position;
+        if (lp != null) { lens.value = lp; document.getElementById("lensLabel").textContent = lensLabel(lp); }
+        fom.textContent = "autofocus settled at " + lensLabel(lp) + " (saved). Snapshot to verify.";
+      } catch (e) { fom.textContent = "✕ " + e.message; }
+    });
+
+    document.getElementById("saveFocusBtn").addEventListener("click", () =>
+      saveSettings({ lens_position: Number(lens.value) }, document.getElementById("focusSaved")).catch(() => {}));
+
+    document.getElementById("saveRecBtn").addEventListener("click", () =>
+      saveSettings({
+        clip_seconds: Number(document.getElementById("clipLen").value),
+        bitrate: Number(document.getElementById("bitrate").value),
+        rotate_180: document.getElementById("rotate").checked,
+      }, document.getElementById("recSaved")).catch(() => {}));
+
+    // ============ settings: system actions ============
+    async function systemAction(action, label) {
+      if (!confirm(`${label} the feeder now?`)) return;
+      const msg = document.getElementById("sysMsg");
+      msg.hidden = false; msg.textContent = label + "…"; msg.className = "saved";
+      try {
+        const r = await (await fetch("/api/system/" + action, { method: "POST" })).json();
+        if (r.ok) { msg.textContent = label + " requested ✓" + (action === "reboot" ? " — back in ~1 min" : ""); }
+        else { msg.textContent = "✕ " + (r.error || "failed"); msg.className = "saved warn"; }
+      } catch (e) { msg.textContent = "✕ " + e.message; msg.className = "saved warn"; }
+    }
+    document.getElementById("restartBtn").addEventListener("click", () => systemAction("restart", "Restart services"));
+    document.getElementById("rebootBtn").addEventListener("click", () => systemAction("reboot", "Reboot"));
+
+    // ============ boot ============
+    loadGallery();
   </script>
 </body>
 </html>

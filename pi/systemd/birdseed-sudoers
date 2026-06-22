@@ -1,0 +1,16 @@
+# Let the birdseed server reboot the Pi / restart the services from the web UI
+# WITHOUT a password — but ONLY those exact commands, nothing else.
+#
+#   installs to /etc/sudoers.d/birdseed (mode 0440, root:root)
+#
+# The server runs as the unprivileged 'steelheadforever' user (so a serving bug
+# can't touch the rest of the system). Remote recovery — "reboot the feeder from
+# the couch instead of walking outside to pull power" — needs exactly two
+# privileged actions, and this grants those two and only those two. The command
+# strings here must match _SYSTEM_ACTIONS in server.py character-for-character,
+# or sudo will (correctly) refuse them.
+#
+# Edit this file ONLY via `sudo visudo -f /etc/sudoers.d/birdseed`; install.sh
+# validates it with `visudo -c` before putting it in place, because a malformed
+# sudoers file can lock you out of sudo entirely.
+steelheadforever ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl restart birdseed.target

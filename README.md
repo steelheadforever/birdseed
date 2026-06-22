@@ -19,7 +19,7 @@ the power budget is the hard constraint of an off-grid, solar-fed feeder cam.
 | Part | What it is | Notes |
 |------|-----------|-------|
 | Compute | **Pi Zero 2 W** (with header) | BCM2710A1 — quad Cortex-A53, ARMv8, runs 64-bit RPi OS |
-| Camera | **Camera Module 3**, autofocus | Sony IMX708, 12 MP; autofocus because birds don't pose at a fixed distance |
+| Camera | **Camera Module 3**, autofocus | Sony IMX708, 12 MP; AF lens used as *fixed* focus — the perch sits at a known ~10 cm, where depth of field is millimetres, so we calibrate once (settings tab) and pin it rather than let AF hunt |
 | Motion | **HC-SR501** PIR | VCC from **5 V**; OUT is **3.3 V** logic → straight to a GPIO, no level shifter. Retrigger jumper → **H** |
 | CSI cable | Pi Zero narrow CSI adapter | The wide cable in the Cam Module 3 box does NOT fit the Zero's port — this one does |
 | Wiring | Female-to-female jumpers | For the PIR |

@@ -53,6 +53,20 @@ else
   echo "           'dtparam=watchdog=on' to /boot/firmware/config.txt and reboot."
 fi
 
+# ---- settings tab: let the web UI reboot / restart services without SSH.
+# Grant the server NOPASSWD sudo on exactly those two commands (and nothing
+# else). visudo -c validates the file BEFORE we install it — a malformed
+# sudoers can lock you out of sudo, so we never copy an unchecked one.
+echo
+echo "installing remote-control sudoers rule..."
+if sudo visudo -c -f "$HERE"/birdseed-sudoers >/dev/null; then
+  sudo install -m 0440 -o root -g root "$HERE"/birdseed-sudoers /etc/sudoers.d/birdseed
+  echo "  sudoers rule installed (reboot + restart birdseed.target)."
+else
+  echo "  WARNING: birdseed-sudoers failed validation; NOT installed."
+  echo "           The web reboot/restart buttons will be inoperative until fixed."
+fi
+
 echo
 echo "birdseed is up, and will start on every boot from cold."
 echo
