@@ -3,6 +3,11 @@ Description=birdseed recorder — PIR trigger -> camera -> H.264 clips
 # Camera + GPIO are local hardware; no network needed. Just wait for the system
 # to finish coming up.
 After=multi-user.target
+# Make this unit follow birdseed.target: with PartOf, `systemctl restart
+# birdseed.target` propagates the restart down to here. Without it, restarting
+# the target is a no-op for the actual services — the trap that kept new code
+# from "sticking" after a deploy (files copied, but the old process lived on).
+PartOf=birdseed.target
 
 [Service]
 Type=simple

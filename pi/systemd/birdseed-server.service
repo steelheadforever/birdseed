@@ -4,6 +4,9 @@ Description=birdseed server — read-only LAN clip gallery (FastAPI)
 # difference between the two units.
 After=network-online.target
 Wants=network-online.target
+# Follow birdseed.target so `systemctl restart birdseed.target` actually
+# restarts this service (see the note in birdseed-recorder.service).
+PartOf=birdseed.target
 
 [Service]
 Type=simple
