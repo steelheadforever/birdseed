@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from . import state
+from . import motion, state
 from .interfaces import Camera, MotionSensor
 from .storage import enforce_size_cap
 
@@ -45,6 +45,11 @@ class Recorder:
         # the card can't fill. The writer prunes; the (read-only) server never does.
         self.clip_cap_bytes = clip_cap_bytes
         self.clips_dir.mkdir(parents=True, exist_ok=True)
+        # Motion-confirm state. threshold 0 = keep all (set from settings each
+        # loop); the rest is telemetry the settings tab reads back to calibrate.
+        self._motion_threshold = 0.0
+        self._last_motion_score: float | None = None
+        self._filtered_count = 0  # clips discarded as empty, since boot
 
     def _next_clip_path(self) -> Path:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -60,9 +65,29 @@ class Recorder:
             if self.sensor.wait_for_motion(timeout=POLL_S):
                 path = self._next_clip_path()
                 self.camera.record_clip(path, self.clip_seconds)
-                print(f"saved {path.name}")
+                self._confirm_motion(path)  # keep or discard as 'empty motion'
                 self._enforce_cap()
                 self.sensor.wait_for_no_motion()
+
+    def _confirm_motion(self, path: Path) -> None:
+        """Score the just-recorded clip; delete it if it's empty motion.
+
+        Always logs the score (that log IS the calibration data). Deletes only
+        when the threshold is armed (>0) and the score is below it — and never
+        when scoring failed (score is None), so a bad analysis can't eat a real
+        clip. The poster .jpg rides along, like the storage cap's eviction.
+        """
+        score = motion.score_clip(path)
+        self._last_motion_score = score
+        thr = self._motion_threshold
+        shown = "n/a" if score is None else f"{score:.2f}"
+        if score is not None and thr > 0 and score < thr:
+            path.unlink(missing_ok=True)
+            path.with_suffix(".jpg").unlink(missing_ok=True)
+            self._filtered_count += 1
+            print(f"discarded {path.name} (motion {shown} < {thr:.2f})")
+        else:
+            print(f"saved {path.name} (motion {shown})")
 
     def _apply_settings(self) -> None:
         """Re-read settings, push them to the camera, and publish camera state.
@@ -73,6 +98,7 @@ class Recorder:
         """
         settings = state.load_settings()
         self.clip_seconds = float(settings.get("clip_seconds", self.clip_seconds))
+        self._motion_threshold = float(settings.get("motion_threshold", 0.0))
         try:
             self.camera.apply_settings(settings)
         except Exception as e:  # never let a bad setting kill the capture loop
@@ -88,6 +114,10 @@ class Recorder:
                 "clip_seconds": self.clip_seconds,
                 "bitrate": settings.get("bitrate"),
                 "rotate_180": settings.get("rotate_180"),
+                # Motion-confirm telemetry, for live calibration in the UI.
+                "motion_threshold": self._motion_threshold,
+                "last_motion_score": self._last_motion_score,
+                "filtered_count": self._filtered_count,
             }
         )
 

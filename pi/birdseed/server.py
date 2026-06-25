@@ -182,6 +182,7 @@ _SETTING_BOUNDS = {
     "lens_position": (0.0, 10.0),    # dioptres: infinity .. ~10 cm (lens limit)
     "clip_seconds": (1.0, 60.0),
     "bitrate": (1_000_000, 15_000_000),
+    "motion_threshold": (0.0, 100.0),  # 0 = keep all; scdet score scale
 }
 
 

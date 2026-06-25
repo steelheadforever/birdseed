@@ -50,6 +50,11 @@ DEFAULTS: dict = {
     "clip_seconds": 10.0,
     "bitrate": 8_000_000,
     "rotate_180": True,      # camera is mounted upside-down (see hardware.py)
+    # Discard a clip if its peak motion score (see motion.py) is below this.
+    # 0 = keep everything (instrument mode): score and log, delete nothing.
+    # Start here, watch real scores in the settings tab, then raise it to sit
+    # just above the empty-clip floor. Never guess this — calibrate it.
+    "motion_threshold": 0.0,
 }
 
 

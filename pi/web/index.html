@@ -250,6 +250,19 @@
     </div>
 
     <div class="control">
+      <h3>Motion filter — discard empty clips</h3>
+      <p style="color:var(--tan);font-size:.9rem;margin:.2rem 0 .6rem">
+        The PIR fires on any IR change — wind, sun, shadows — not just birds. After each clip a cheap frame-difference pass scores how much actually moved; clips below the threshold are deleted as empty motion.
+        <strong>Start at 0 (keep everything)</strong>, watch the “Motion · last clip” card as real birds and false triggers come in, then set the threshold just above the empty-clip floor. <em>Note: this catches still scenes, not a wind-shaken camera — that needs a rigid mount.</em></p>
+      <label for="motionThr">Threshold (0 = keep all)</label>
+      <input type="number" id="motionThr" min="0" max="100" step="0.5" style="max-width:220px" />
+      <div>
+        <button class="btn" id="saveMotionBtn">Save motion filter</button>
+        <span class="saved" id="motionSaved" hidden>saved ✓</span>
+      </div>
+    </div>
+
+    <div class="control">
       <h3>System</h3>
       <p style="color:var(--tan);font-size:.9rem;margin:.2rem 0 .4rem">Recover the feeder without walking out to it.</p>
       <button class="btn secondary" id="restartBtn">Restart services</button>
@@ -565,6 +578,11 @@
       cards.push(card("Camera focus", `<div class="big">${c.focus_distance_m ? (c.focus_distance_m * 100).toFixed(0) + " cm" : "—"}</div>` +
         rows([["lens position", dash(c.lens_position)], ["clip length", dash(c.clip_seconds, " s")],
               ["bitrate", c.bitrate ? (c.bitrate / 1e6) + " Mbps" : "—"]])));
+      // Motion filter — the live last-clip score is the calibration number.
+      const score = c.last_motion_score;
+      cards.push(card("Motion · last clip", `<div class="big">${score == null ? "—" : Number(score).toFixed(2)}</div>` +
+        rows([["threshold", c.motion_threshold ? Number(c.motion_threshold).toFixed(2) : "off (keep all)"],
+              ["filtered since boot", dash(c.filtered_count)]])));
       // Battery placeholder (solar phase)
       cards.push(card("Battery", `<div class="big">—</div><div class="rows"><div><span class="k">awaiting INA219 sensor</span><span class="v"></span></div></div>`));
 
@@ -595,6 +613,7 @@
         document.getElementById("clipLen").value = s.clip_seconds;
         document.getElementById("bitrate").value = String(s.bitrate);
         document.getElementById("rotate").checked = !!s.rotate_180;
+        document.getElementById("motionThr").value = s.motion_threshold;
       } catch (e) { /* health error path already surfaces connectivity */ }
     }
 
@@ -667,6 +686,10 @@
         bitrate: Number(document.getElementById("bitrate").value),
         rotate_180: document.getElementById("rotate").checked,
       }, document.getElementById("recSaved")).catch(() => {}));
+
+    document.getElementById("saveMotionBtn").addEventListener("click", () =>
+      saveSettings({ motion_threshold: Number(document.getElementById("motionThr").value) },
+        document.getElementById("motionSaved")).catch(() => {}));
 
     // ============ settings: system actions ============
     async function systemAction(action, label) {
