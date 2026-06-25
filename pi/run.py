@@ -38,7 +38,11 @@ def make_backends():
 
 def main() -> None:
     sensor, camera = make_backends()
-    clips_dir = Path(__file__).parent / "clips"
+    # Same override the server reads (BIRDSEED_CLIPS_DIR), so the two processes
+    # always agree on where clips live — they default to pi/clips, but if one is
+    # pointed elsewhere the other follows. (They MUST agree: the recorder deletes
+    # from here what the server lists from there.)
+    clips_dir = Path(os.environ.get("BIRDSEED_CLIPS_DIR", Path(__file__).parent / "clips"))
     # Policy lives here, not in the Recorder: how big the on-disk ring buffer is
     # allowed to grow. Sized for this build's 32 GB card — ~16 GB of clips leaves
     # the card roughly half-empty even after RPi OS Lite, which keeps a large pool

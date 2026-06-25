@@ -229,6 +229,27 @@ def get_command(cmd_id: int) -> dict:
     return {"status": "pending", "id": cmd_id}
 
 
+@app.post("/api/delete")
+def post_delete(payload: dict = Body(...)) -> dict:
+    """Queue a bulk delete (a day, or everything). Returns an id to poll on.
+
+    Like the camera commands, the server only *requests* — the recorder owns
+    deletion and carries it out, so the read-only-for-clips contract holds.
+    """
+    scope = payload.get("scope")
+    if scope not in ("day", "all"):
+        raise HTTPException(status_code=400, detail="scope must be 'day' or 'all'")
+    params = {"scope": scope}
+    if scope == "day":
+        day = payload.get("day")
+        try:
+            datetime.strptime(str(day), "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="day must be YYYY-MM-DD")
+        params["day"] = day
+    return {"id": state.post_command("delete", params), "status": "queued"}
+
+
 @app.get("/snapshot.jpg")
 def get_snapshot() -> FileResponse:
     """The most recent still the recorder captured for the focus UI."""

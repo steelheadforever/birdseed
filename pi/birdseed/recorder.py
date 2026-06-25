@@ -138,11 +138,46 @@ class Recorder:
                 # Persist the discovered focus so clips use it from now on.
                 state.save_settings({"lens_position": focus.get("lens_position")})
                 result = {"id": cmd_id, "action": action, "ok": True, "focus": focus}
+            elif action == "delete":
+                # User-initiated bulk delete from the gallery. Deletion is the
+                # recorder's job (it owns the storage cap and the motion filter),
+                # so the read-only server asks and we carry it out here.
+                n = self._delete_clips(params)
+                result = {"id": cmd_id, "action": action, "ok": True, "deleted": n}
             else:
                 result = {"id": cmd_id, "action": action, "ok": False, "error": "unknown action"}
         except Exception as e:
             result = {"id": cmd_id, "action": action, "ok": False, "error": str(e)}
         state.write_result(result)
+
+    def _delete_clips(self, params: dict) -> int:
+        """Delete a day's clips, or all of them. Returns how many were removed.
+
+        scope='all'  -> every clip on disk.
+        scope='day'  -> one day (params['day'] = YYYY-MM-DD), matched by the
+                        filename prefix, so we never touch another day's files.
+        The date is run through strptime before it touches a glob, so nothing
+        user-controlled reaches the filesystem path — no traversal possible.
+        Each clip's poster .jpg goes with it.
+        """
+        scope = params.get("scope")
+        if scope == "all":
+            targets = list(self.clips_dir.glob("clip_*.mp4"))
+        elif scope == "day":
+            try:
+                prefix = datetime.strptime(params.get("day", ""), "%Y-%m-%d").strftime("clip_%Y%m%d_")
+            except ValueError:
+                return 0
+            targets = list(self.clips_dir.glob(prefix + "*.mp4"))
+        else:
+            return 0
+        count = 0
+        for p in targets:
+            p.unlink(missing_ok=True)
+            p.with_suffix(".jpg").unlink(missing_ok=True)
+            count += 1
+        print(f"  deleted {count} clip(s) (scope={scope}, day={params.get('day', '-')})")
+        return count
 
     def _enforce_cap(self) -> None:
         """Evict oldest clips if we're over the size cap. No-op when uncapped."""

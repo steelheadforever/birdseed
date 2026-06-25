@@ -88,12 +88,17 @@
 
     /* ---- gallery: day sections ---- */
     .day { margin-bottom: .5rem; }
-    .day > button {
-      display: flex; align-items: baseline; gap: .6rem; width: 100%;
+    .dayhead { display: flex; align-items: baseline; gap: .6rem; border-top: 1px solid var(--bark-edge); }
+    .day .daytoggle {
+      display: flex; align-items: baseline; gap: .6rem; flex: 1;
       cursor: pointer; text-align: left;
-      font: inherit; color: inherit; background: none; border: none;
-      padding: .65rem 0; border-top: 1px solid var(--bark-edge);
+      font: inherit; color: inherit; background: none; border: none; padding: .65rem 0;
     }
+    .day .daydelete {
+      cursor: pointer; font: inherit; font-size: .8rem; color: var(--tan);
+      background: none; border: none; padding: .65rem .2rem .65rem .6rem;
+    }
+    .day .daydelete:hover { color: var(--alarm); }
     .day h2 { font-size: 1.1rem; margin: 0; }
     .day .daycount { color: var(--tan); font-size: .85rem; font-variant-numeric: tabular-nums; }
     .day .chev { margin-left: auto; color: var(--moss-deep); transition: transform .15s; }
@@ -263,6 +268,13 @@
     </div>
 
     <div class="control">
+      <h3>Storage</h3>
+      <p style="color:var(--tan);font-size:.9rem;margin:.2rem 0 .6rem">
+        Delete clips a whole day at a time from the Gallery tab (each day header has a 🗑), or clear the card entirely here.</p>
+      <button class="btn danger" id="deleteAllBtn">Delete ALL clips</button>
+    </div>
+
+    <div class="control">
       <h3>System</h3>
       <p style="color:var(--tan);font-size:.9rem;margin:.2rem 0 .4rem">Recover the feeder without walking out to it.</p>
       <button class="btn secondary" id="restartBtn">Restart services</button>
@@ -419,7 +431,12 @@
     function daySection(day) {
       const section = document.createElement("section");
       section.className = "day";
+      // Header row: a toggle button + a separate delete button. (Can't nest a
+      // button inside a button, hence the two-button row.)
+      const dayhead = document.createElement("div");
+      dayhead.className = "dayhead";
       const head = document.createElement("button");
+      head.className = "daytoggle";
       const title = document.createElement("h2"); title.textContent = dayLabel(day.day);
       const daycount = document.createElement("span");
       daycount.className = "daycount";
@@ -427,7 +444,14 @@
       const chev = document.createElement("span");
       chev.className = "chev"; chev.textContent = "›";
       head.append(title, daycount, chev);
-      section.appendChild(head);
+      const del = document.createElement("button");
+      del.className = "daydelete";
+      del.textContent = "🗑 delete day";
+      del.title = "Delete every clip from " + dayLabel(day.day);
+      del.addEventListener("click", () =>
+        deleteClips({ scope: "day", day: day.day }, `all ${day.count} clips from ${dayLabel(day.day)}`));
+      dayhead.append(head, del);
+      section.appendChild(dayhead);
 
       const grid = document.createElement("div");
       grid.className = "grid"; grid.hidden = true;
@@ -503,6 +527,31 @@
         document.getElementById("days").replaceChildren(...sections);
         if (sections.length) { const newest = await sections[0].open(); renderHero(days, newest); }
       } catch (e) { showError(e); }
+    }
+
+    // Bulk delete. Like the camera commands, the server only queues it and the
+    // recorder (deletion's owner) does the work — so we post, poll for done,
+    // then rebuild the gallery from scratch since its state is now stale.
+    async function deleteClips(payload, label) {
+      if (!confirm(`Delete ${label}?\n\nThis permanently removes the clips and can’t be undone.`)) return;
+      try {
+        const post = await fetch("/api/delete", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+        });
+        if (!post.ok) throw new Error("HTTP " + post.status);
+        const { id } = await post.json();
+        for (let i = 0; i < 30; i++) {        // up to ~30 s (a recording can delay it)
+          await new Promise((r) => setTimeout(r, 1000));
+          const r = await (await fetch("/api/command/" + id)).json();
+          if (r.status === "done") {
+            playlist.clear();
+            closeLightbox();
+            await loadGallery();
+            return;
+          }
+        }
+        alert("Delete timed out — the recorder may be mid-clip. Try again in a moment.");
+      } catch (e) { alert("Delete failed: " + e.message); }
     }
 
     // ============ settings: helpers ============
@@ -704,6 +753,7 @@
     }
     document.getElementById("restartBtn").addEventListener("click", () => systemAction("restart", "Restart services"));
     document.getElementById("rebootBtn").addEventListener("click", () => systemAction("reboot", "Reboot"));
+    document.getElementById("deleteAllBtn").addEventListener("click", () => deleteClips({ scope: "all" }, "EVERY clip on the device"));
 
     // ============ boot ============
     loadGallery();
