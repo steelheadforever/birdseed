@@ -279,6 +279,7 @@
       <p style="color:var(--tan);font-size:.9rem;margin:.2rem 0 .4rem">Recover the feeder without walking out to it.</p>
       <button class="btn secondary" id="restartBtn">Restart services</button>
       <button class="btn danger" id="rebootBtn">Reboot Pi</button>
+      <button class="btn danger" id="shutdownBtn">Shut down</button>
       <span class="saved" id="sysMsg" hidden></span>
     </div>
     <p class="error" id="settingsError" hidden></p>
@@ -742,17 +743,26 @@
 
     // ============ settings: system actions ============
     async function systemAction(action, label) {
-      if (!confirm(`${label} the feeder now?`)) return;
+      // Shutdown is the scary one — there's no remote wake, so spell that out.
+      const confirmMsg = action === "shutdown"
+        ? "Shut down the feeder now?\n\nIt will NOT come back on its own — you’ll have to physically unplug and replug power to start it again."
+        : `${label} the feeder now?`;
+      if (!confirm(confirmMsg)) return;
       const msg = document.getElementById("sysMsg");
       msg.hidden = false; msg.textContent = label + "…"; msg.className = "saved";
       try {
         const r = await (await fetch("/api/system/" + action, { method: "POST" })).json();
-        if (r.ok) { msg.textContent = label + " requested ✓" + (action === "reboot" ? " — back in ~1 min" : ""); }
-        else { msg.textContent = "✕ " + (r.error || "failed"); msg.className = "saved warn"; }
+        if (r.ok) {
+          const note = action === "reboot" ? " — back in ~1 min"
+            : action === "shutdown" ? " — safe to unplug once the green LED goes dark"
+            : "";
+          msg.textContent = label + " requested ✓" + note;
+        } else { msg.textContent = "✕ " + (r.error || "failed"); msg.className = "saved warn"; }
       } catch (e) { msg.textContent = "✕ " + e.message; msg.className = "saved warn"; }
     }
     document.getElementById("restartBtn").addEventListener("click", () => systemAction("restart", "Restart services"));
     document.getElementById("rebootBtn").addEventListener("click", () => systemAction("reboot", "Reboot"));
+    document.getElementById("shutdownBtn").addEventListener("click", () => systemAction("shutdown", "Shut down"));
     document.getElementById("deleteAllBtn").addEventListener("click", () => deleteClips({ scope: "all" }, "EVERY clip on the device"));
 
     // ============ boot ============

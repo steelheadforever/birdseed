@@ -263,6 +263,10 @@ _SYSTEM_ACTIONS = {
     # sudoers drop-in (pi/systemd/birdseed-sudoers) grants the server NOPASSWD.
     "reboot": ["sudo", "systemctl", "reboot"],
     "restart": ["sudo", "systemctl", "restart", "birdseed.target"],
+    # Clean halt, so test runs end by clicking instead of yanking power. Note:
+    # there's no remote wake — the Pi only comes back when power is physically
+    # cycled, so this is a one-way trip until someone's at the device.
+    "shutdown": ["sudo", "systemctl", "poweroff"],
 }
 
 

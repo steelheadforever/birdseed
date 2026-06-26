@@ -13,4 +13,4 @@
 # Edit this file ONLY via `sudo visudo -f /etc/sudoers.d/birdseed`; install.sh
 # validates it with `visudo -c` before putting it in place, because a malformed
 # sudoers file can lock you out of sudo entirely.
-steelheadforever ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl restart birdseed.target
+steelheadforever ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl restart birdseed.target
