@@ -58,12 +58,12 @@
     .tabs button[aria-selected="true"] { color: var(--cream); background: var(--bark-edge); border-color: var(--moss-deep); }
     .panel[hidden] { display: none; }
 
-    #flip {
+    #flip, #selectBtn {
       cursor: pointer; font: inherit; font-size: .85rem; color: var(--cream);
       background: var(--bark); border: 1px solid var(--bark-edge); border-radius: 8px;
       padding: .3rem .7rem;
     }
-    #flip[aria-pressed="true"] { background: var(--bark-edge); }
+    #flip[aria-pressed="true"], #selectBtn[aria-pressed="true"] { background: var(--bark-edge); border-color: var(--moss-deep); }
     body.flipped video, body.flipped .poster img, body.flipped #heroShot img { transform: rotate(180deg); }
     body.flipped video::-webkit-media-controls { transform: rotate(180deg); }
 
@@ -111,6 +111,26 @@
     .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .poster .badge { position: absolute; inset: 0; display: grid; place-items: center; font-size: 2rem; color: var(--cream); text-shadow: 0 1px 8px rgba(0,0,0,.7); opacity: .85; }
     .poster.noimg .badge { color: var(--tan); }
+    /* select mode: hide the play affordance, show a checkbox per card */
+    body.selecting .poster .badge { display: none; }
+    .poster .check {
+      position: absolute; top: .5rem; left: .5rem; width: 1.5rem; height: 1.5rem;
+      border-radius: 50%; border: 2px solid var(--cream); background: rgba(0,0,0,.45);
+      display: none; place-items: center; font-size: .9rem; color: var(--night);
+    }
+    body.selecting .poster .check { display: grid; }
+    .clip.selected { outline: 2px solid var(--moss); outline-offset: -2px; }
+    .clip.selected .check { background: var(--moss); border-color: var(--moss); }
+    .clip.selected .check::after { content: "✓"; font-weight: 700; }
+    .selectbar {
+      position: fixed; bottom: 1.1rem; left: 50%; transform: translateX(-50%);
+      display: none; align-items: center; gap: 1rem; z-index: 10;
+      background: var(--bark); border: 1px solid var(--moss-deep); border-radius: 12px;
+      padding: .55rem .6rem .55rem 1rem; box-shadow: 0 6px 24px rgba(0,0,0,.55);
+    }
+    body.selecting .selectbar { display: flex; }
+    .selectbar #selCount { font-variant-numeric: tabular-nums; color: var(--tan); }
+    .selectbar .btn { margin: 0; }
     .meta { padding: .55rem .8rem; display: flex; align-items: baseline; gap: .5rem; font-variant-numeric: tabular-nums; }
     .meta .when { font-weight: 600; }
     .meta .size { color: var(--tan); margin-left: auto; font-size: .9rem; }
@@ -192,6 +212,7 @@
   <!-- ============ GALLERY TAB ============ -->
   <main class="panel" id="panelGallery">
     <div class="galbar">
+      <button id="selectBtn" aria-pressed="false">Select</button>
       <button id="flip" aria-pressed="false" title="Rotate all clips 180°">⟲ flip view</button>
     </div>
 
@@ -209,6 +230,12 @@
     <div id="days"></div>
     <p class="empty" id="empty" hidden>No clips yet. Trip the sensor and one will show up here.</p>
     <p class="error" id="error" hidden></p>
+
+    <div class="selectbar" id="selectbar">
+      <span id="selCount">0 selected</span>
+      <button class="btn danger" id="delSelBtn">Delete selected</button>
+      <button class="btn secondary" id="selCancelBtn">Cancel</button>
+    </div>
   </main>
 
   <!-- ============ SETTINGS TAB ============ -->
@@ -415,7 +442,17 @@
       const badge = document.createElement("span");
       badge.className = "badge"; badge.textContent = "▶";
       poster.appendChild(badge);
-      poster.addEventListener("click", () => showClip(clip.name));
+      const check = document.createElement("span");
+      check.className = "check";
+      poster.appendChild(check);
+      if (selected.has(clip.name)) card.classList.add("selected");
+      // In select mode the poster toggles selection; otherwise it plays.
+      poster.addEventListener("click", () => {
+        if (!selectMode) { showClip(clip.name); return; }
+        if (selected.has(clip.name)) { selected.delete(clip.name); card.classList.remove("selected"); }
+        else { selected.add(clip.name); card.classList.add("selected"); }
+        updateSelectBar();
+      });
       card.appendChild(poster);
 
       const meta = document.createElement("div");
@@ -447,7 +484,7 @@
       head.append(title, daycount, chev);
       const del = document.createElement("button");
       del.className = "daydelete";
-      del.textContent = "🗑 delete day";
+      del.textContent = "Delete day";
       del.title = "Delete every clip from " + dayLabel(day.day);
       del.addEventListener("click", () =>
         deleteClips({ scope: "day", day: day.day }, `all ${day.count} clips from ${dayLabel(day.day)}`));
@@ -534,7 +571,7 @@
     // recorder (deletion's owner) does the work — so we post, poll for done,
     // then rebuild the gallery from scratch since its state is now stale.
     async function deleteClips(payload, label) {
-      if (!confirm(`Delete ${label}?\n\nThis permanently removes the clips and can’t be undone.`)) return;
+      if (!confirm(`Delete ${label}?\n\nThis permanently removes the clips and can’t be undone.`)) return false;
       try {
         const post = await fetch("/api/delete", {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
@@ -548,12 +585,43 @@
             playlist.clear();
             closeLightbox();
             await loadGallery();
-            return;
+            return true;
           }
         }
         alert("Delete timed out — the recorder may be mid-clip. Try again in a moment.");
-      } catch (e) { alert("Delete failed: " + e.message); }
+        return false;
+      } catch (e) { alert("Delete failed: " + e.message); return false; }
     }
+
+    // ============ gallery: select mode (multi-select delete) ============
+    let selectMode = false;
+    const selected = new Set();           // clip names currently picked
+    const selectbar = document.getElementById("selectbar");
+    function updateSelectBar() {
+      document.getElementById("selCount").textContent =
+        selected.size + (selected.size === 1 ? " selected" : " selected");
+      document.getElementById("delSelBtn").disabled = selected.size === 0;
+    }
+    function setSelectMode(on) {
+      selectMode = on;
+      document.body.classList.toggle("selecting", on);
+      document.getElementById("selectBtn").setAttribute("aria-pressed", String(on));
+      if (!on) {
+        selected.clear();
+        document.querySelectorAll(".clip.selected").forEach((c) => c.classList.remove("selected"));
+      }
+      updateSelectBar();
+    }
+    document.getElementById("selectBtn").addEventListener("click", () => setSelectMode(!selectMode));
+    document.getElementById("selCancelBtn").addEventListener("click", () => setSelectMode(false));
+    document.getElementById("delSelBtn").addEventListener("click", async () => {
+      if (!selected.size) return;
+      const names = [...selected];
+      const ok = await deleteClips(
+        { scope: "names", names },
+        `${names.length} selected clip${names.length === 1 ? "" : "s"}`);
+      if (ok) setSelectMode(false);   // loadGallery already rebuilt the grid
+    });
 
     // ============ settings: helpers ============
     const dash = (v, suffix = "") => (v === null || v === undefined ? "—" : v + suffix);

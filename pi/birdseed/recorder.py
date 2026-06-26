@@ -169,6 +169,17 @@ class Recorder:
             except ValueError:
                 return 0
             targets = list(self.clips_dir.glob(prefix + "*.mp4"))
+        elif scope == "names":
+            # Specific clips picked in the gallery's select mode. Each name is
+            # resolved and checked to be a real .mp4 sitting directly in the
+            # clips dir (same guard the server uses for serving), so a crafted
+            # name like '../../etc/passwd' can't escape and nothing else is hit.
+            base = self.clips_dir.resolve()
+            targets = []
+            for name in params.get("names", []):
+                cand = (self.clips_dir / str(name)).resolve()
+                if cand.parent == base and cand.suffix == ".mp4" and cand.is_file():
+                    targets.append(cand)
         else:
             return 0
         count = 0

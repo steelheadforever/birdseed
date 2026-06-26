@@ -237,8 +237,8 @@ def post_delete(payload: dict = Body(...)) -> dict:
     deletion and carries it out, so the read-only-for-clips contract holds.
     """
     scope = payload.get("scope")
-    if scope not in ("day", "all"):
-        raise HTTPException(status_code=400, detail="scope must be 'day' or 'all'")
+    if scope not in ("day", "names", "all"):
+        raise HTTPException(status_code=400, detail="scope must be 'day', 'names', or 'all'")
     params = {"scope": scope}
     if scope == "day":
         day = payload.get("day")
@@ -247,6 +247,11 @@ def post_delete(payload: dict = Body(...)) -> dict:
         except ValueError:
             raise HTTPException(status_code=400, detail="day must be YYYY-MM-DD")
         params["day"] = day
+    elif scope == "names":
+        names = payload.get("names")
+        if not isinstance(names, list) or not names:
+            raise HTTPException(status_code=400, detail="names must be a non-empty list")
+        params["names"] = [str(n) for n in names]
     return {"id": state.post_command("delete", params), "status": "queued"}
 
 
