@@ -266,12 +266,15 @@ def get_snapshot() -> FileResponse:
 _SYSTEM_ACTIONS = {
     # Maps a UI action to the exact command. These are the ONLY commands the
     # sudoers drop-in (pi/systemd/birdseed-sudoers) grants the server NOPASSWD.
-    "reboot": ["sudo", "systemctl", "reboot"],
-    "restart": ["sudo", "systemctl", "restart", "birdseed.target"],
+    # `-n` = never prompt: with NOPASSWD this changes nothing, but if the rule
+    # ever fails to match, sudo fails *immediately* with a clear error instead
+    # of hanging waiting for a password on a TTY the service doesn't have.
+    "reboot": ["sudo", "-n", "systemctl", "reboot"],
+    "restart": ["sudo", "-n", "systemctl", "restart", "birdseed.target"],
     # Clean halt, so test runs end by clicking instead of yanking power. Note:
     # there's no remote wake — the Pi only comes back when power is physically
     # cycled, so this is a one-way trip until someone's at the device.
-    "shutdown": ["sudo", "systemctl", "poweroff"],
+    "shutdown": ["sudo", "-n", "systemctl", "poweroff"],
 }
 
 
@@ -289,9 +292,13 @@ def post_system(action: str) -> dict:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         if proc.returncode == 0:
             return {"ok": True, "action": action}
-        return {"ok": False, "action": action, "error": proc.stderr.strip() or "command failed"}
+        err = proc.stderr.strip() or proc.stdout.strip() or "command failed"
     except (OSError, subprocess.SubprocessError) as e:
-        return {"ok": False, "action": action, "error": str(e)}
+        err = str(e)
+    # Log it too, so a failed shutdown leaves a trail in the journal even if the
+    # on-screen message is missed (journalctl -u birdseed-server).
+    print(f"system action '{action}' FAILED: {err}", flush=True)
+    return {"ok": False, "action": action, "error": err}
 
 
 @app.get("/")

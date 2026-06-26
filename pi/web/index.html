@@ -149,6 +149,8 @@
     #lightbox .bar .size { color: var(--tan); font-size: .9rem; }
     #lightbox .bar .dl { margin-left: auto; color: var(--moss); text-decoration: none; }
     #lightbox .bar .dl:hover { text-decoration: underline; }
+    #lightbox .bar .lbdel { cursor: pointer; font: inherit; background: none; border: none; color: var(--alarm); padding: 0; }
+    #lightbox .bar .lbdel:hover { text-decoration: underline; }
     #lightbox .nav { position: absolute; top: 0; bottom: 3.2rem; width: 4.5rem; display: grid; place-items: center; cursor: pointer; font-size: 2rem; color: var(--cream); background: none; border: none; opacity: 0; transition: opacity .15s; text-shadow: 0 1px 8px rgba(0,0,0,.8); }
     #lightbox:hover .nav:not(:disabled) { opacity: .9; }
     #lightbox .nav:disabled { cursor: default; }
@@ -297,7 +299,7 @@
     <div class="control">
       <h3>Storage</h3>
       <p style="color:var(--tan);font-size:.9rem;margin:.2rem 0 .6rem">
-        Delete clips a whole day at a time from the Gallery tab (each day header has a 🗑), or clear the card entirely here.</p>
+        Delete individual clips while watching them (the lightbox has a delete), pick several with the Gallery’s Select button, remove a whole day from its header, or clear the card entirely here.</p>
       <button class="btn danger" id="deleteAllBtn">Delete ALL clips</button>
     </div>
 
@@ -318,6 +320,7 @@
       <span class="when" id="lbWhen"></span>
       <span class="size" id="lbSize"></span>
       <a class="dl" id="lbDl" href="">download</a>
+      <button class="lbdel" id="lbDelBtn">delete</button>
     </div>
     <button class="nav" id="prev" title="Newer clip">‹</button>
     <button class="nav" id="next" title="Older clip">›</button>
@@ -411,6 +414,11 @@
     document.getElementById("prev").addEventListener("click", () => step("newer"));
     document.getElementById("next").addEventListener("click", () => step("older"));
     document.getElementById("close").addEventListener("click", closeLightbox);
+    // Delete the clip you're currently watching. deleteClips closes the lightbox
+    // and rebuilds the gallery on success.
+    document.getElementById("lbDelBtn").addEventListener("click", () => {
+      if (showing) deleteClips({ scope: "names", names: [showing] }, "this clip");
+    });
     lightbox.addEventListener("cancel", closeLightbox);
     lightbox.addEventListener("click", (e) => { if (e.target === lightbox) closeLightbox(); });
     lightbox.addEventListener("keydown", (e) => {
